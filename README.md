@@ -9,7 +9,7 @@ Settings can be defined in a config file (./mlflow-pyfunc-server.cfg, ~/.mlflow-
 ```
 mlflow-pyfunc-server --host 0.0.0.0 -w 2 --mlflow https://mlflow:1234
 ```
-![Screenshot](/media/screenshot.png?raw=true "Optional Title")
+![Screenshot](https://raw.githubusercontent.com/VK/mlflow-pyfunc-server/master/media/screenshot.png "Screenshot")
 
 ## Develop
 ```
