@@ -30,7 +30,7 @@ import logging
 from .config import p as cfg
 from .basehandler import BaseHandler
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 class Server:
 
