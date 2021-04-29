@@ -8,11 +8,13 @@ def read(fname):
 
 setup(
     name='mlflow_pyfunc_server',
+    url="https://github.com/VK/mlflow-pyfunc-server",
     version=mlflow_pyfunc_server.__version__,
     packages=find_packages(),
     license = "MIT",
     keywords = "mlflow pyfunc",
     long_description=read('README.md'),
+    long_description_content_type="text/markdown",
     install_requires=[
         'mlflow',
         'uvicorn',
