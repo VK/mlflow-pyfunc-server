@@ -30,12 +30,19 @@ import logging
 from .config import p as cfg
 from .basehandler import BaseHandler
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 class Server:
 
     def __init__(self):
         self.config = cfg.parse_known_args()[0]
+        
+        # init logger
+        gunicorn_logger = logging.getLogger('gunicorn.error')
+        logger.handlers = gunicorn_logger.handlers
+        logger.setLevel(gunicorn_logger.level)
+        self.logger = logger
+        logger.info(f"Start server version {__version__}")
 
         # connect to mlflow
         if self.config.mlflow_noverify:
@@ -79,11 +86,12 @@ class Server:
 
         # move all routes to the basepath
         if self.config.basepath != "":
-            basepath_re = "^" + self.config.basepath.replace("/", "\\/")+"\\/"
+            basepath_re = self.config.basepath.replace("/", "\\/")+"\\/"
             for r in self.app.routes:
                 if not isinstance(r, fastapi.routing.APIRoute):
                     r.path_regex = re.compile(r.path_regex.pattern.replace(
-                        '^/', basepath_re), re.UNICODE)
+                        '\\/', basepath_re, 1), re.UNICODE)
+
 
         # make docs entrypage
         async def redirect_to_docs(data):
@@ -144,11 +152,7 @@ class Server:
         # create a dictionary with all errors
         self.error_dict = {}
 
-        # init logger
-        gunicorn_logger = logging.getLogger('gunicorn.error')
-        logger.handlers = gunicorn_logger.handlers
-        logger.setLevel(gunicorn_logger.level)
-        self.logger = logger
+
 
     def check_token(self, token):
         """
