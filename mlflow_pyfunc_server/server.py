@@ -30,7 +30,7 @@ import logging
 from .config import p as cfg
 from .basehandler import BaseHandler
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 class Server:
 
@@ -221,7 +221,7 @@ class Server:
                 if name in self.error_dict:
                     del self.error_dict[name]
             except Exception as ex:
-                self.error_dict["name"] = str(ex)
+                self.error_dict[name] = str(ex)
 
         self.app.openapi_schema = None
 

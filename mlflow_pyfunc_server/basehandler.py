@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import HTTPException, Depends
 from datetime import datetime
 
+import json
 
 class BaseHandler:
 
@@ -24,10 +25,7 @@ class BaseHandler:
         self.server = server
         self.m = m
 
-        try:
-            model = mlflow.pyfunc.load_model(model_version.source)
-        except:
-            model = None
+        model = mlflow.pyfunc.load_model(model_version.source)
 
         try:
             input_schema = model.metadata.get_input_schema()
@@ -85,6 +83,7 @@ class BaseHandler:
                  self.get_example_el(el) for el in output_schema.to_dict()})
         else:
             output_schema_class = None
+        
 
         self.version = model_version.version
         self.source = model_version.source
