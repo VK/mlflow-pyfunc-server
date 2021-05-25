@@ -32,6 +32,14 @@ p.add_argument('--mlflow-token', type=str,
 p.add_argument('--mlflow-noverify',  default=False,
                action="store_true", help="ignore ssl cert problems")
 
+# parameters to connect to a mlflow server
+p.add_argument('--title', type=str,
+               default="MLflow PyFunc Server", help="Server title")
+p.add_argument('--description', type=str,
+               default="Serve MLflow PyFunc models.", help="Server description")
+
+
+
 # local caching
 # p.add_argument('--cachedir', type=str, default='./cache',
 #                help="folder to keep the local cache")

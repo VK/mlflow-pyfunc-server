@@ -75,9 +75,9 @@ class Server:
             if self.app.openapi_schema:
                 return self.app.openapi_schema
             openapi_schema = get_openapi(
-                title="MLflow PyFunc Server",
+                title=self.config.title,
                 version=__version__,
-                description="Serve MLflow PyFunc models",
+                description=self.config.description,
                 routes=self.app.routes,
             )
             self.app.openapi_schema = openapi_schema
