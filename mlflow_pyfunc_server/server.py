@@ -30,12 +30,15 @@ import logging
 from .config import p as cfg
 from .basehandler import BaseHandler
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 class Server:
 
-    def __init__(self):
-        self.config = cfg.parse_known_args()[0]
+    def __init__(self, config=None):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = cfg.parse_known_args()[0]
         
         # init logger
         gunicorn_logger = logging.getLogger('gunicorn.error')
