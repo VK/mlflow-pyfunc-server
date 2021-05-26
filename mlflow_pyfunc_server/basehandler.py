@@ -61,7 +61,7 @@ class BaseHandler:
                 {el["name"]:
                  input_example_data[el["name"]]
                  if el["name"] in input_example_data else
-                 self.get_example_el(el) for el in input_schema.to_dict()})
+                 self.get_example_el(el) for el in input_schema.to_dict() if "name" in el})
         else:
             input_schema_class = None
 
@@ -84,7 +84,6 @@ class BaseHandler:
         else:
             output_schema_class = None
         
-
         self.version = model_version.version
         self.source = model_version.source
         self.run_id = model_version.run_id
@@ -98,36 +97,69 @@ class BaseHandler:
         self.creation = datetime.fromtimestamp(
             timestamp).strftime('%Y-%m-%d %H:%M')
 
-        long_description = f"""{m.description}
+        long_description = f"""{m.description}\n\n"""
+        try:
+            if len(input_schema.inputs) > 0:
+                long_description += f"<b>Input Schema:</b> {self.get_schema_string(input_schema)} <br/>\n"
+        except:
+            pass
+        try:
+            if len(output_schema.inputs) > 0:
+                long_description += f"<b>Output Schema:</b> {self.get_schema_string(output_schema)}<br/>\n"
+        except:
+            pass
 
-<b>Input Schema:</b> {self.get_schema_string(input_schema)} <br/>
-<b>Output Schema:</b> {self.get_schema_string(output_schema)}<br/>
+        long_description += f"""
 <b>Version: </b> {self.get_version_link(m.name, model_version)}<br/>
 <b>Run: </b> {self.get_experiment_link(m.name, model_version)}<br/>
 <b>Creation: </b> {self.creation}
         """
 
-        if len(self.server.config.token) > 0:
-            @self.server.app.post(
-                self.server.config.basepath+'/'+m.name,
-                description=long_description,
-                name=m.name, tags=["Models"],
-                response_model=output_schema_class)
-            async def func(
-                data: input_schema_class,
-                token: str = Depends(self.server.security)
-            ):
-                self.server.check_token(token)
-                return self.apply_model(data)
+        if input_schema_class is None or len(input_schema.inputs) == 0:
+            # no input create get interface
+            if len(self.server.config.token) > 0:
+                @self.server.app.get(
+                    self.server.config.basepath+'/'+m.name,
+                    description=long_description,
+                    name=m.name, tags=["Models"],
+                    response_model=output_schema_class
+                    )
+                async def func(token: str = Depends(self.server.security)):
+                    self.server.check_token(token)
+                    return self.apply_model(None)
+            else:
+                @self.server.app.get(
+                    self.server.config.basepath+'/'+m.name,
+                    description=long_description,
+                    name=m.name, tags=["Models"],
+                    response_model=output_schema_class
+                )
+                async def func():
+                    return self.apply_model(None)
         else:
-            @self.server.app.post(
-                self.server.config.basepath+'/'+m.name,
-                description=long_description,
-                name=m.name, tags=["Models"],
-                response_model=output_schema_class
-            )
-            async def func(data: input_schema_class):
-                return self.apply_model(data)
+            # create post interface
+            if len(self.server.config.token) > 0:
+                @self.server.app.post(
+                    self.server.config.basepath+'/'+m.name,
+                    description=long_description,
+                    name=m.name, tags=["Models"],
+                    response_model=output_schema_class
+                    )
+                async def func(
+                    data: input_schema_class,
+                    token: str = Depends(self.server.security)
+                ):
+                    self.server.check_token(token)
+                    return self.apply_model(data)
+            else:
+                @self.server.app.post(
+                    self.server.config.basepath+'/'+m.name,
+                    description=long_description,
+                    name=m.name, tags=["Models"],
+                    response_model=output_schema_class
+                )
+                async def func(data: input_schema_class):
+                    return self.apply_model(data)
 
     def apply_model(self, data):
         try:
@@ -136,12 +168,12 @@ class BaseHandler:
             raise self.get_error_message("Parse input error", ex)
 
         try:
-            output = self.model.predict(np_input)
+            model_output = self.model.predict(np_input)
         except Exception as ex:
             raise self.get_error_message("Model prediction error", ex)
 
         try:
-            output = self.parse_output(output)
+            output = self.parse_output(model_output)
         except Exception as ex:
             raise self.get_error_message("Parse output error", ex)
 
@@ -166,7 +198,7 @@ class BaseHandler:
 
     def numpy_input(self, data, input_cfg):
         types = {el["name"]: el["tensor-spec"]["dtype"]
-                 for el in input_cfg.to_dict()}
+                 for el in input_cfg.to_dict() if "name" in el}
         return {
             key: np.array(val).astype(types[key])
             for key, val in data.items()

@@ -1,4 +1,4 @@
-import os
+import sys, os
 
 from mlflow.tracking import MlflowClient
 import mlflow.pyfunc
@@ -189,7 +189,15 @@ class Server:
             if "server" in self.error_dict:
                 del self.error_dict["server"]
         except Exception as ex:
-            self.error_dict["server"] = str(ex)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            self.error_dict["server"] = {
+                "message": str(ex),
+                "type": str(exc_type),
+                "file": fname,
+                "line": exc_tb.tb_lineno,
+                "exception": exc_obj
+            }
 
         for m in all_models:
 
@@ -221,7 +229,16 @@ class Server:
                 if name in self.error_dict:
                     del self.error_dict[name]
             except Exception as ex:
-                self.error_dict[name] = str(ex)
+                exc_type, exc_obj, exc_tb = sys.exc_info()
+                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                self.error_dict[name] = {
+                    "message": str(ex),
+                    "type": str(exc_type),
+                    "file": fname,
+                    "line": exc_tb.tb_lineno,
+                    "exception": exc_obj
+                }
+
 
         self.app.openapi_schema = None
 
