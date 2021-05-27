@@ -3,3 +3,4 @@ uvicorn
 configargparse
 apscheduler
 fastapi
+dill
