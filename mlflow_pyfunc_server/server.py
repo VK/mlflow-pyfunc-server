@@ -1,4 +1,6 @@
-import sys, os
+import sys
+import os
+import pathlib
 
 from mlflow.tracking import MlflowClient
 import mlflow.pyfunc
@@ -27,10 +29,13 @@ import requests
 from fastapi.logger import logger
 import logging
 
-from .config import p as cfg
-from .basehandler import BaseHandler
 
-__version__ = "0.1.5"
+from .config import p as cfg
+from .basehandler import BaseHandler, load
+from .basehandler import load as load_BaseHandler
+
+__version__ = "0.1.6"
+
 
 class Server:
 
@@ -39,7 +44,7 @@ class Server:
             self.config = config
         else:
             self.config = cfg.parse_known_args()[0]
-        
+
         # init logger
         gunicorn_logger = logging.getLogger('gunicorn.error')
         logger.handlers = gunicorn_logger.handlers
@@ -48,6 +53,9 @@ class Server:
         logger.info(f"Start server version {__version__}")
 
         # connect to mlflow
+        if "databricks" in self.config.mlflow:
+            os.environ['DATABRICKS_HOST'] = self.config.mlflow
+            os.environ['DATABRICKS_TOKEN'] = self.config.mlflow_token
         if self.config.mlflow_noverify:
             os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
         mlflow.set_tracking_uri(self.config.mlflow)
@@ -95,8 +103,8 @@ class Server:
                     r.path_regex = re.compile(r.path_regex.pattern.replace(
                         '\\/', basepath_re, 1), re.UNICODE)
 
-
         # make docs entrypage
+
         async def redirect_to_docs(data):
             response = RedirectResponse(url=self.config.basepath+'/docs')
             return response
@@ -155,7 +163,14 @@ class Server:
         # create a dictionary with all errors
         self.error_dict = {}
 
-
+        # check caching
+        if self.config.cache:
+            self.full_cache_dir = os.path.join(
+                pathlib.Path().absolute(), self.config.cachedir)
+            logger.info(f"Use cachedir: {self.full_cache_dir}")
+            pathlib.Path(self.full_cache_dir).mkdir(
+                parents=True, exist_ok=True)
+            self.update_models_from_cache()
 
     def check_token(self, token):
         """
@@ -182,6 +197,16 @@ class Server:
         if len(prod_models) > 0:
             return prod_models[0]
         return m.latest_versions[0]
+
+    def update_models_from_cache(self):
+        logger.info(f"Update models from cache")
+        # load all available cached models
+        for filename in os.listdir(self.full_cache_dir):
+            newmodel = load_BaseHandler(os.path.join(
+                self.full_cache_dir, filename), self)
+            self.model_dict[newmodel.name] = newmodel
+
+        self.app.openapi_schema = None
 
     def update_models(self):
         logger.info(f"Update models")
@@ -231,6 +256,11 @@ class Server:
 
                 if name in self.error_dict:
                     del self.error_dict[name]
+
+                if self.config.cache:
+                    # create a cache representation of the new model
+                    newmodel.save(os.path.join(self.full_cache_dir, name))
+
             except Exception as ex:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -241,7 +271,6 @@ class Server:
                     "line": exc_tb.tb_lineno,
                     "exception": exc_obj
                 }
-
 
         self.app.openapi_schema = None
 
@@ -267,5 +296,5 @@ class Server:
         self.scheduler.add_job(func=self.update_models,
                                trigger="date",
                                run_date=datetime.datetime.now()
-                               + datetime.timedelta(seconds=10))
+                               + datetime.timedelta(seconds=2))
         self.scheduler.start()

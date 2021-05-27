@@ -7,7 +7,13 @@ import pandas as pd
 from fastapi import HTTPException, Depends
 from datetime import datetime
 
-import json
+import dill as pickle
+import importlib
+
+import shutil
+import pathlib
+
+
 
 class BaseHandler:
 
@@ -24,8 +30,12 @@ class BaseHandler:
     def __init__(self, server,  m, model_version):
         self.server = server
         self.m = m
+        self.name = m.name
 
-        model = mlflow.pyfunc.load_model(model_version.source)
+        self.model_version_source = (model_version.source)
+        model = mlflow.pyfunc.load_model(self.model_version_source)
+            
+
 
         try:
             input_schema = model.metadata.get_input_schema()
@@ -50,89 +60,101 @@ class BaseHandler:
                     model.metadata.saved_input_example_info[
                         'artifact_path']
                 ))
-            input_example_data = res.json()['inputs']
+            print(res.json())
+            self.input_example_data = res.json()['inputs']
         except:
-            input_example_data = {}
+            self.input_example_data = {}
 
-        if input_schema:
-            input_schema_class = type(
-                m.name+"-input",
-                (BaseModel, ),
-                {el["name"]:
-                 input_example_data[el["name"]]
-                 if el["name"] in input_example_data else
-                 self.get_example_el(el) for el in input_schema.to_dict() if "name" in el})
-        else:
-            input_schema_class = None
-
-        try:
-            np_input = self.numpy_input(input_example_data, input_schema)
-            output_example_data = model.predict(np_input)
-            output_example_data = {k: v.tolist()
-                                   for k, v in output_example_data.items()}
-        except:
-            output_example_data = {}
-
-        if output_schema:
-            output_schema_class = type(
-                m.name+"-output",
-                (BaseModel, ),
-                {el["name"]:
-                 output_example_data[el["name"]]
-                 if el["name"] in output_example_data else
-                 self.get_example_el(el) for el in output_schema.to_dict()})
-        else:
-            output_schema_class = None
-        
         self.version = model_version.version
         self.source = model_version.source
         self.run_id = model_version.run_id
         self.model = model
         self.input_schema = input_schema if input_schema else {"inputs": []}
         self.output_schema = output_schema if output_schema else {"inputs": []}
-        self.input_schema_class = input_schema_class() if input_schema_class else None
-        self.output_schema_class = output_schema_class() if output_schema_class else None
+
         self.description = m.description
         timestamp = model_version.creation_timestamp/1000
         self.creation = datetime.fromtimestamp(
             timestamp).strftime('%Y-%m-%d %H:%M')
 
-        long_description = f"""{m.description}\n\n"""
+        self.long_description = f"""{m.description}\n\n"""
         try:
             if len(input_schema.inputs) > 0:
-                long_description += f"<b>Input Schema:</b> {self.get_schema_string(input_schema)} <br/>\n"
+                self.long_description += f"<b>Input Schema:</b> {self.get_schema_string(input_schema)} <br/>\n"
         except:
             pass
         try:
             if len(output_schema.inputs) > 0:
-                long_description += f"<b>Output Schema:</b> {self.get_schema_string(output_schema)}<br/>\n"
+                self.long_description += f"<b>Output Schema:</b> {self.get_schema_string(output_schema)}<br/>\n"
         except:
             pass
 
-        long_description += f"""
+        self.long_description += f"""
 <b>Version: </b> {self.get_version_link(m.name, model_version)}<br/>
 <b>Run: </b> {self.get_experiment_link(m.name, model_version)}<br/>
 <b>Creation: </b> {self.creation}
         """
 
-        if input_schema_class is None or len(input_schema.inputs) == 0:
+        self.update_schema_classes()
+        self.register_route()
+
+    def update_schema_classes(self):
+
+        if self.input_schema:
+            input_schema_class = type(
+                self.name+"-input",
+                (BaseModel, ),
+                {el["name"]:
+                 self.input_example_data[el["name"]]
+                 if el["name"] in self.input_example_data else
+                 self.get_example_el(el) for el in self.input_schema.to_dict() if "name" in el})
+        else:
+            input_schema_class = None
+
+        try:
+            np_input = self.numpy_input(
+                self.input_example_data, self.input_schema)
+            output_example_data = self.model.predict(np_input)
+            output_example_data = {k: v.tolist()
+                                   for k, v in output_example_data.items()}
+        except:
+            output_example_data = {}
+
+        if self.output_schema:
+            output_schema_class = type(
+                self.name+"-output",
+                (BaseModel, ),
+                {el["name"]:
+                 output_example_data[el["name"]]
+                 if el["name"] in output_example_data else
+                 self.get_example_el(el) for el in self.output_schema.to_dict()})
+        else:
+            output_schema_class = None
+
+        self.input_schema_class = input_schema_class() if input_schema_class else None
+        self.output_schema_class = output_schema_class() if output_schema_class else None
+        self.input_schema_class_type = input_schema_class
+        self.output_schema_class_type = output_schema_class
+
+    def register_route(self):
+        if self.input_schema_class is None or len(self.input_schema.inputs) == 0:
             # no input create get interface
             if len(self.server.config.token) > 0:
                 @self.server.app.get(
-                    self.server.config.basepath+'/'+m.name,
-                    description=long_description,
-                    name=m.name, tags=["Models"],
-                    response_model=output_schema_class
-                    )
+                    self.server.config.basepath+'/'+self.name,
+                    description=self.long_description,
+                    name=self.name, tags=["Models"],
+                    response_model=self.output_schema_class_type
+                )
                 async def func(token: str = Depends(self.server.security)):
                     self.server.check_token(token)
                     return self.apply_model(None)
             else:
                 @self.server.app.get(
-                    self.server.config.basepath+'/'+m.name,
-                    description=long_description,
-                    name=m.name, tags=["Models"],
-                    response_model=output_schema_class
+                    self.server.config.basepath+'/'+self.name,
+                    description=self.long_description,
+                    name=self.name, tags=["Models"],
+                    response_model=self.output_schema_class_type
                 )
                 async def func():
                     return self.apply_model(None)
@@ -140,25 +162,25 @@ class BaseHandler:
             # create post interface
             if len(self.server.config.token) > 0:
                 @self.server.app.post(
-                    self.server.config.basepath+'/'+m.name,
-                    description=long_description,
-                    name=m.name, tags=["Models"],
-                    response_model=output_schema_class
-                    )
+                    self.server.config.basepath+'/'+self.name,
+                    description=self.long_description,
+                    name=self.name, tags=["Models"],
+                    response_model=self.output_schema_class_type
+                )
                 async def func(
-                    data: input_schema_class,
+                    data: self.input_schema_class_type,
                     token: str = Depends(self.server.security)
                 ):
                     self.server.check_token(token)
                     return self.apply_model(data)
             else:
                 @self.server.app.post(
-                    self.server.config.basepath+'/'+m.name,
-                    description=long_description,
-                    name=m.name, tags=["Models"],
-                    response_model=output_schema_class
+                    self.server.config.basepath+'/'+self.name,
+                    description=self.long_description,
+                    name=self.name, tags=["Models"],
+                    response_model=self.output_schema_class_type
                 )
-                async def func(data: input_schema_class):
+                async def func(data: self.input_schema_class_type):
                     return self.apply_model(data)
 
     def apply_model(self, data):
@@ -232,11 +254,115 @@ class BaseHandler:
 
     def info(self):
         return {
-            "name": self.m.name,
+            "name": self.name,
             "version": self.version,
             "latest_versions": self.m.latest_versions,
-            "input": self.input_schema,
-            "output": self.output_schema,
+            "input": self.input_schema.to_dict(),
+            "output": self.output_schema.to_dict(),
             "description": self.description,
             "creation": self.creation
         }
+
+    def save(self, dirname):
+        """
+        store the model to a directory
+        """
+        # save special references
+        server = self.server
+        model = self.model
+        input_schema_class = self.input_schema_class
+        output_schema_class = self.output_schema_class
+        input_schema_class_type = self.input_schema_class_type
+        output_schema_class_type = self.output_schema_class_type
+
+        # null class references
+        self.server = None
+        self.model = None
+        self.input_schema_class = None
+        self.output_schema_class = None
+        self.input_schema_class_type = None
+        self.output_schema_class_type = None
+
+        # create clean folder
+        if os.path.exists(dirname):
+            shutil.rmtree(dirname)
+        pathlib.Path(dirname).mkdir(parents=True, exist_ok=True)
+
+        # copy the mlflow model to a local folder
+        extra_model_dir = os.path.join(dirname, "mlflow")
+        pathlib.Path(extra_model_dir).mkdir(parents=True, exist_ok=True)
+        self.extra_model_dir =_pyfunc_save_model_to_cache(self.model_version_source, extra_model_dir)
+
+        # save the metadata
+        filename = os.path.join(dirname, "meta.pkl")
+        with open(filename, "wb") as f:
+            pickle.dump(self, f)
+
+        # reset class references
+        self.server = server
+        self.model = model
+        self.input_schema_class = input_schema_class
+        self.output_schema_class = output_schema_class
+        self.input_schema_class_type = input_schema_class_type
+        self.output_schema_class_type = output_schema_class_type
+
+
+def load(dirname, server):
+    """
+    create a basehandler from cache
+    """
+    filename = os.path.join(dirname, "meta.pkl")
+    with open(filename, "rb") as f:
+        output = pickle.load(f)
+
+    output.model = _pyfunc_load_model_from_cache(output.extra_model_dir)
+    output.server = server
+    output.update_schema_classes()
+    output.register_route()
+
+    return output
+
+
+def _pyfunc_save_model_to_cache(model_uri, output_path):
+    """
+    download the artifact into the cache folder
+    """
+
+    local_path = mlflow.pyfunc._download_artifact_from_uri(artifact_uri=model_uri,
+                                                           output_path=output_path)
+    return local_path
+
+
+def _pyfunc_load_model_from_cache(local_path):
+    """
+    load the pyfunc model directly from cache
+    """
+    from mlflow.models import Model
+    from mlflow.pyfunc import PyFuncModel
+    from mlflow.models.model import MLMODEL_FILE_NAME
+    from mlflow.exceptions import MlflowException
+    from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
+    FLAVOR_NAME = "python_function"
+    DATA = "data"
+    MAIN = "loader_module"
+    CODE = "code"
+
+    model_meta = Model.load(os.path.join(local_path, MLMODEL_FILE_NAME))
+
+    conf = model_meta.flavors.get(FLAVOR_NAME)
+    if conf is None:
+        raise MlflowException(
+            'Model does not have the "{flavor_name}" flavor'.format(
+                flavor_name=FLAVOR_NAME),
+            RESOURCE_DOES_NOT_EXIST,
+        )
+
+    data_path = os.path.join(local_path, conf[DATA]) if (
+        DATA in conf) else local_path
+    if CODE in conf and conf[CODE]:
+        code_path = os.path.join(local_path, conf[CODE])
+        mlflow.pyfunc.utils._add_code_to_system_path(code_path=code_path)        
+    model_impl = importlib.import_module(conf[MAIN])._load_pyfunc(data_path)
+    return PyFuncModel(model_meta=model_meta, model_impl=model_impl)
+
+    

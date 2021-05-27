@@ -141,3 +141,6 @@ cython_debug/
 
 # local config
 mlflow-pyfunc-server.cfg
+
+# local cache folder
+cache
