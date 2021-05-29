@@ -34,8 +34,6 @@ class BaseHandler:
 
         self.model_version_source = (model_version.source)
         model = mlflow.pyfunc.load_model(self.model_version_source)
-            
-
 
         try:
             input_schema = model.metadata.get_input_schema()
@@ -184,10 +182,14 @@ class BaseHandler:
                     return self.apply_model(data)
 
     def apply_model(self, data):
-        try:
-            np_input = self.numpy_input(data.__dict__, self.input_schema)
-        except Exception as ex:
-            raise self.get_error_message("Parse input error", ex)
+        # create a numpy input array
+        if self.input_schema_class is None or len(self.input_schema.inputs) == 0:
+            np_input = np.array([])
+        else:
+            try:
+                np_input = self.numpy_input(data.__dict__, self.input_schema)
+            except Exception as ex:
+                raise self.get_error_message("Parse input error", ex)
 
         try:
             model_output = self.model.predict(np_input)

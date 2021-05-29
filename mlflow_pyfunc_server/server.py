@@ -28,13 +28,14 @@ import requests
 # logging
 from fastapi.logger import logger
 import logging
+import traceback
 
 
 from .config import p as cfg
 from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 
 class Server:
@@ -44,6 +45,11 @@ class Server:
             self.config = config
         else:
             self.config = cfg.parse_known_args()[0]
+
+        # create the dictionary with all the models
+        self.model_dict = {}
+        # create a dictionary with all errors
+        self.error_dict = {}
 
         # init logger
         gunicorn_logger = logging.getLogger('gunicorn.error')
@@ -63,7 +69,20 @@ class Server:
             os.environ["MLFLOW_TRACKING_TOKEN"] = self.config.mlflow_token
         self.client = MlflowClient()
 
-        # init scheduler
+        # register at eureka
+        if self.config.eureka_server:
+            try:
+                import py_eureka_client.eureka_client as eureka_client
+                eureka_client.init(eureka_server=self.config.eureka_server,
+                                app_name=self.config.app_name,
+                                instance_port=self.config.port,
+                                )
+            except Exception as ex:
+                self.error_dict["eureka"] = {
+                    "message": str(ex),
+                }
+
+        # init schedulerr
         self.scheduler = None
         self.init_scheduler()
 
@@ -156,12 +175,24 @@ class Server:
             self.init_scheduler()
             return "OK. Please be patient :)"
 
-        # create model artifact endpoints
+        #dummy route for the  eureka health call
+        if self.config.eureka_server:
+            @self.app.get(
+                self.config.basepath+'/health',
+                tags=["Metadata"],
+                description="Eureka health call."
+            )
+            async def health():
+                return {}
+            @self.app.post(
+                self.config.basepath+'/health',
+                tags=["Metadata"],
+                description="Eureka health call."
+            )
+            async def health():
+                return {}
 
-        # create the dictionary with all the models
-        self.model_dict = {}
-        # create a dictionary with all errors
-        self.error_dict = {}
+        # create model artifact endpoints
 
         # check caching
         if self.config.cache:
@@ -269,7 +300,8 @@ class Server:
                     "type": str(exc_type),
                     "file": fname,
                     "line": exc_tb.tb_lineno,
-                    "exception": exc_obj
+                    "exception": exc_obj,
+                    "traceback": traceback.format_exc().split("\n"),
                 }
 
         self.app.openapi_schema = None

@@ -4,3 +4,5 @@ configargparse
 apscheduler
 fastapi
 dill
+cloudpickle==1.3.0
+py-eureka-client

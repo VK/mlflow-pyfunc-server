@@ -39,9 +39,14 @@ p.add_argument('--description', type=str,
                default="Serve MLflow PyFunc models.", help="Server description")
 
 
-
 # local caching
 p.add_argument('--cache',  default=False, action="store_true",
                help="cache latest model on harddrive")
 p.add_argument('--cachedir', type=str, default='./cache',
                help="folder to keep the local cache")
+
+# eureka register
+p.add_argument('--eureka_server', type=str, default=None,
+               help="http://your-eureka-server-peer1,http://your-eureka-server-peer2")
+p.add_argument('--app_name', type=str, default="mlflow_pyfunc_server",
+               help="Name of the app in eureka")
