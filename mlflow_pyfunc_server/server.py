@@ -35,7 +35,7 @@ from .config import p as cfg
 from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 
 class Server:
@@ -76,6 +76,7 @@ class Server:
                 eureka_client.init(eureka_server=self.config.eureka_server,
                                 app_name=self.config.app_name,
                                 instance_port=self.config.port,
+                                instance_host=self.config.host_name
                                 )
             except Exception as ex:
                 self.error_dict["eureka"] = {
@@ -132,6 +133,8 @@ class Server:
                 self.config.basepath, redirect_to_docs))
         self.app.routes.append(starlette_Route(
             self.config.basepath+"/", redirect_to_docs))
+        self.app.routes.append(starlette_Route(
+            self.config.basepath+"/info", redirect_to_docs))                        
 
         # create model list endpoint
         @self.app.get(

@@ -50,3 +50,5 @@ p.add_argument('--eureka_server', type=str, default=None,
                help="http://your-eureka-server-peer1,http://your-eureka-server-peer2")
 p.add_argument('--app_name', type=str, default="mlflow_pyfunc_server",
                help="Name of the app in eureka")
+p.add_argument('--host_name', type=str, default=None,
+               help="the host name of the app")               
