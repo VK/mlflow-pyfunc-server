@@ -35,8 +35,8 @@ from .config import p as cfg
 from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 
-__version__ = "0.1.9"
-
+__version__ = "0.1.10"
+__eureka_started = False
 
 class Server:
 
@@ -73,11 +73,16 @@ class Server:
         if self.config.eureka_server:
             try:
                 import py_eureka_client.eureka_client as eureka_client
-                eureka_client.init(eureka_server=self.config.eureka_server,
-                                app_name=self.config.app_name,
-                                instance_port=self.config.host_port if self.config.host_port else self.config.port,
-                                instance_host=self.config.host_name
-                                )
+                global __eureka_started
+                if __eureka_started:
+                    print("Eureka client already started")
+                else:
+                    eureka_client.init(eureka_server=self.config.eureka_server,
+                                       app_name=self.config.app_name,
+                                       instance_port=self.config.host_port if self.config.host_port else self.config.port,
+                                       instance_host=self.config.host_name
+                                      )
+                    __eureka_started = True
             except Exception as ex:
                 self.error_dict["eureka"] = {
                     "message": str(ex),
