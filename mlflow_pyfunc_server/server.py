@@ -35,7 +35,7 @@ from .config import p as cfg
 from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 _eureka_started = False
 
 class Server:
