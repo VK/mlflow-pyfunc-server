@@ -34,9 +34,16 @@ import traceback
 from .config import p as cfg
 from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
+import atexit
 
-__version__ = "0.1.11"
-_eureka_started = False
+__version__ = "0.1.13"
+_eureka_client = None
+
+@atexit.register
+def cleanup():
+    global _eureka_client
+    if _eureka_client:
+        _eureka_client.stop()
 
 class Server:
 
@@ -73,16 +80,19 @@ class Server:
         if self.config.eureka_server:
             try:
                 import py_eureka_client.eureka_client as eureka_client
-                global _eureka_started
-                if _eureka_started:
+                global _eureka_client
+                if _eureka_client:
                     print("Eureka client already started")
                 else:
-                    eureka_client.init(eureka_server=self.config.eureka_server,
-                                       app_name=self.config.app_name,
-                                       instance_port=self.config.host_port if self.config.host_port else self.config.port,
-                                       instance_host=self.config.host_name
-                                      )
-                    _eureka_started = True
+                    
+                    _eureka_client = eureka_client.EurekaClient(
+                        eureka_server=self.config.eureka_server,
+                        app_name=self.config.app_name,
+                        instance_port=self.config.host_port if self.config.host_port else self.config.port,
+                        instance_host=self.config.host_name,
+                    )
+                    _eureka_client.start()
+
             except Exception as ex:
                 self.error_dict["eureka"] = {
                     "message": str(ex),
