@@ -51,6 +51,10 @@ p.add_argument('--eureka_server', type=str, default=None,
 p.add_argument('--app_name', type=str, default="mlflow_pyfunc_server",
                help="Name of the app in eureka")
 p.add_argument('--host_name', type=str, default=None,
-               help="the host name of the app")               
+               help="the host name of the app")
 p.add_argument('--host_port', type=str, default=None,
-               help="the port of the app at the host (if different from port)")  
+               help="the port of the app at the host (if different from port)")
+p.add_argument('--eureka_zone', type=str, default=None,
+               help="the zone of the service")
+p.add_argument('--eureka_region', type=str, default=None,
+               help="the region of the service")
