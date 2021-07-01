@@ -200,7 +200,8 @@ class BaseHandler:
         except Exception as ex:
             raise self.get_error_message("Parse output error", ex)
 
-        return output.update({"..version": self.version, "..mlflow_id": self.run_id})
+        output.update({"..version": self.version, "..mlflow_id": self.run_id})
+        return output
 
     def get_version_link(self, name, model_version):
         return f"{model_version.version}"
