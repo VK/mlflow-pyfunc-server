@@ -54,7 +54,7 @@ p.add_argument('--host_name', type=str, default=None,
                help="the host name of the app")
 p.add_argument('--host_port', type=str, default=None,
                help="the port of the app at the host (if different from port)")
-p.add_argument('--eureka_zone', type=str, default=None,
+p.add_argument('--eureka_zone', type=str, default="",
                help="the zone of the service")
-p.add_argument('--eureka_region', type=str, default=None,
+p.add_argument('--eureka_region', type=str, default="",
                help="the region of the service")

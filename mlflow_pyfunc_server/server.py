@@ -36,7 +36,7 @@ from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 import atexit
 
-__version__ = "0.1.14"
+__version__ = "0.1.15"
 _eureka_client = None
 
 @atexit.register
@@ -91,7 +91,7 @@ class Server:
                         instance_port=self.config.host_port if self.config.host_port else self.config.port,
                         instance_host=self.config.host_name,
                         region=self.config.eureka_region,
-                        zone=self.config.eureka_region,
+                        zone=self.config.eureka_zone,
                     )
                     _eureka_client.start()
 
