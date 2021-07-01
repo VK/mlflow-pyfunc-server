@@ -14,7 +14,6 @@ import shutil
 import pathlib
 
 
-
 class BaseHandler:
 
     dtype_sample = {
@@ -201,7 +200,7 @@ class BaseHandler:
         except Exception as ex:
             raise self.get_error_message("Parse output error", ex)
 
-        return output
+        return output.update({"..version": self.version, "..mlflow_id": self.run_id})
 
     def get_version_link(self, name, model_version):
         return f"{model_version.version}"
@@ -293,7 +292,8 @@ class BaseHandler:
         # copy the mlflow model to a local folder
         extra_model_dir = os.path.join(dirname, "mlflow")
         pathlib.Path(extra_model_dir).mkdir(parents=True, exist_ok=True)
-        self.extra_model_dir =_pyfunc_save_model_to_cache(self.model_version_source, extra_model_dir)
+        self.extra_model_dir = _pyfunc_save_model_to_cache(
+            self.model_version_source, extra_model_dir)
 
         # save the metadata
         filename = os.path.join(dirname, "meta.pkl")
@@ -363,8 +363,6 @@ def _pyfunc_load_model_from_cache(local_path):
         DATA in conf) else local_path
     if CODE in conf and conf[CODE]:
         code_path = os.path.join(local_path, conf[CODE])
-        mlflow.pyfunc.utils._add_code_to_system_path(code_path=code_path)        
+        mlflow.pyfunc.utils._add_code_to_system_path(code_path=code_path)
     model_impl = importlib.import_module(conf[MAIN])._load_pyfunc(data_path)
     return PyFuncModel(model_meta=model_meta, model_impl=model_impl)
-
-    
