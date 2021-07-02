@@ -1,6 +1,7 @@
 import os
 import mlflow
 from mlflow.types.schema import Schema
+from mlflow.types.schema import TensorSpec
 from pydantic import BaseModel
 import numpy as np
 import pandas as pd
@@ -68,6 +69,11 @@ class BaseHandler:
         self.model = model
         self.input_schema = input_schema if input_schema else {"inputs": []}
         self.output_schema = output_schema if output_schema else {"inputs": []}
+
+        self.output_schema._inputs.append(
+            TensorSpec(np.dtype("int"), [1], "x__version"))
+        self.output_schema._inputs.append(
+            TensorSpec(np.dtype("str"), [1], "x__mlflow_id"))
 
         self.description = m.description
         timestamp = model_version.creation_timestamp/1000
@@ -200,7 +206,9 @@ class BaseHandler:
         except Exception as ex:
             raise self.get_error_message("Parse output error", ex)
 
-        output.update({"..version": self.version, "..mlflow_id": self.run_id})
+        output.update(
+            {"x__version": [int(self.version)], "x__mlflow_id": [self.run_id]})
+
         return output
 
     def get_version_link(self, name, model_version):

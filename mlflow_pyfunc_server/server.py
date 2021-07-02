@@ -36,7 +36,7 @@ from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 import atexit
 
-__version__ = "0.1.17"
+__version__ = "0.1.18"
 _eureka_client = None
 
 @atexit.register
