@@ -36,7 +36,7 @@ from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 import atexit
 
-__version__ = "0.1.18"
+__version__ = "0.1.19"
 _eureka_client = None
 
 @atexit.register
@@ -180,7 +180,8 @@ class Server:
             self.config.basepath+'/errors',
             tags=["Metadata"],
             description="Get a dict of all errors.",
-            response_model=Dict[str, Any]
+            response_model=Dict[str, Any],
+            include_in_schema=False
         )
         async def errors():
             return self.error_dict
@@ -189,7 +190,8 @@ class Server:
         @self.app.get(
             self.config.basepath+'/refresh',
             tags=["Metadata"],
-            description="Trigger the server to update the models."
+            description="Trigger the server to update the models.",
+            include_in_schema=False
         )
         async def refresh():
             self.init_scheduler()
@@ -200,14 +202,16 @@ class Server:
             @self.app.get(
                 self.config.basepath+'/health',
                 tags=["Metadata"],
-                description="Eureka health call."
+                description="Eureka health call.",
+                include_in_schema=False
             )
             async def health():
                 return {}
             @self.app.post(
                 self.config.basepath+'/health',
                 tags=["Metadata"],
-                description="Eureka health call."
+                description="Eureka health call.",
+                include_in_schema=False
             )
             async def health():
                 return {}
