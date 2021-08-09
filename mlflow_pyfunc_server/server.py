@@ -36,7 +36,7 @@ from .basehandler import BaseHandler, load
 from .basehandler import load as load_BaseHandler
 import atexit
 
-__version__ = "0.1.19"
+__version__ = "0.1.20"
 _eureka_client = None
 
 @atexit.register
@@ -122,13 +122,19 @@ class Server:
         def custom_openapi():
             if self.app.openapi_schema:
                 return self.app.openapi_schema
-            openapi_schema = get_openapi(
-                title=self.config.title,
-                version=__version__,
-                description=self.config.description,
-                routes=self.app.routes,
-            )
-            self.app.openapi_schema = openapi_schema
+            try:
+                openapi_schema = get_openapi(
+                    title=self.config.title,
+                    version=__version__,
+                    description=self.config.description,
+                    routes=self.app.routes,
+                )
+
+                self.app.openapi_schema = openapi_schema
+            except:
+                pid = os.getpid()
+                os.kill(pid, 9)
+            
             return self.app.openapi_schema
         self.app.openapi = custom_openapi
 
