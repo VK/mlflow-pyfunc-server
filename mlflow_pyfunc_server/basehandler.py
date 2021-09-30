@@ -1,7 +1,9 @@
 import os
 import mlflow
+from mlflow.pyfunc import model
 from mlflow.types.schema import Schema
 from mlflow.types.schema import TensorSpec
+
 from pydantic import BaseModel
 import numpy as np
 import pandas as pd
@@ -27,12 +29,134 @@ class BaseHandler:
         "object": "?"
     }
 
+    def _setup_model(self):
+        from mlflow.pyfunc import _download_artifact_from_uri
+        import subprocess
+        import glob
+
+        # create a logfile
+        setup_logfile = open(os.path.join(
+            self.work_folder, f"{os.path.basename(self.model_folder)}_setup_log.txt"), "a")
+
+        setup_logfile.write(f"Start download {self.model_folder}\n")
+        setup_logfile.flush()
+        _download_artifact_from_uri(
+            artifact_uri=self.model_version_source,
+            output_path=self.work_folder)
+        setup_logfile.write(f"End download {self.model_folder}\n")
+        setup_logfile.flush()
+
+        result_env = subprocess.run(
+            ["python", "-m",  "venv", "env"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+        setup_logfile.flush()
+
+        env_pip = os.path.join(self.model_folder, "./env/Scripts/pip")
+
+        # get the requirements of the model
+        req_file = os.path.join(self.model_folder, "requirements.txt")
+        if os.path.exists(req_file):
+            with open(req_file, "r") as f:
+                req = f.readlines()
+        else:
+            req = mlflow.pyfunc.get_default_pip_requirements()
+
+        # remove the directly given libs from the requirements
+        for lib_folder in glob.glob(os.path.join(self.model_folder, "code/*")):
+            lib_name = os.path.basename(lib_folder)
+            req = [r for r in req if lib_name not in r]
+        req = [r.rstrip("\n") for r in req]
+
+        # log stripped requirements
+        setup_logfile.write("Install req:\n")
+        for r in req:
+            setup_logfile.write(f"{r}\n")
+        setup_logfile.flush()
+
+        # install the requirements
+        result_pip = subprocess.run(
+            [env_pip, "install", *req], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+        setup_logfile.flush()
+
+        # install direct libs
+        for lib_folder in glob.glob(os.path.join(self.model_folder, "code/*")):
+
+            # install requirements of the libs
+            lib_req_file = os.path.join(lib_folder, "requirements.txt")
+            if os.path.exists(lib_req_file):
+                result_pip = subprocess.run(
+                    [env_pip,
+                     "install", "-r",
+                     lib_req_file],
+                    stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+            setup_logfile.flush()
+
+            # install the libs
+            result_lib = subprocess.run([
+                os.path.join(self.model_folder, "./env/Scripts/python"),
+                "./setup.py",
+                "build",
+                "install"], stdout=setup_logfile, stderr=setup_logfile,
+                cwd=lib_folder)
+            setup_logfile.flush()
+
+        # close the logging
+        setup_logfile.close()
+
+    def _get_free_port(self, host='127.0.0.1'):
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind((host, 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        return port
+
+    def _start_server(self):
+        # create a logfile
+        serve_logfile = open(os.path.join(
+            self.work_folder, f"{os.path.basename(self.model_folder)}_servelog.txt"), "a")
+
+        import subprocess
+        cmd = f"{os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda --port {self.port}"
+
+        process = subprocess.Popen(
+            "cmd.exe", cwd=self.model_folder,
+            stdin=subprocess.PIPE, stdout=serve_logfile, stderr=serve_logfile,
+            text=True, shell=True
+        )
+
+        outputA, errorsA = process.communicate([
+            os.path.join(self.model_folder, "./env/Scripts/activate"),
+         cmd   
+        ])
+
+        #outputB, errorsB = process.communicate(input=cmd)
+        
+
+        #output, errors = process.communicate(input=cmd)
+        # serve_logfile.flush()
+
+        #ret = subprocess.run(cmd, capture_output=True, shell=True)
+
+        print(ret)
+
     def __init__(self, server,  m, model_version):
         self.server = server
         self.m = m
         self.name = m.name
 
         self.model_version_source = (model_version.source)
+        self.run_id = model_version.run_id
+        self.work_folder = os.path.join(server.full_cache_dir, self.run_id)
+        self.model_folder = os.path.join(
+            self.work_folder, model_version.source.split("/")[-1])
+        pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
+
+        if not os.path.exists(self.model_folder):
+            self._setup_model()
+
+        self.port = self._get_free_port()
+        self._start_server()
+
         model = mlflow.pyfunc.load_model(self.model_version_source)
 
         try:
@@ -65,7 +189,7 @@ class BaseHandler:
 
         self.version = model_version.version
         self.source = model_version.source
-        self.run_id = model_version.run_id
+
         self.model = model
         self.input_schema = input_schema if input_schema else {"inputs": []}
         self.output_schema = output_schema if output_schema else {"inputs": []}

@@ -231,7 +231,7 @@ class Server:
             logger.info(f"Use cachedir: {self.full_cache_dir}")
             pathlib.Path(self.full_cache_dir).mkdir(
                 parents=True, exist_ok=True)
-            self.update_models_from_cache()
+        #     self.update_models_from_cache()
 
     def check_token(self, token):
         """
