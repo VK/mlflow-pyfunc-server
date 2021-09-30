@@ -1,3 +1,4 @@
+from ntpath import join
 import os
 import mlflow
 from mlflow.pyfunc import model
@@ -111,33 +112,57 @@ class BaseHandler:
         return port
 
     def _start_server(self):
+        from time import sleep
+
         # create a logfile
         serve_logfile = open(os.path.join(
             self.work_folder, f"{os.path.basename(self.model_folder)}_servelog.txt"), "a")
 
         import subprocess
-        cmd = f"{os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda --port {self.port}"
+        cmd = f"""
+        {os.path.join(self.model_folder, './env/Scripts/activate')}
+        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda --port {self.port}
+        
+        """
 
         process = subprocess.Popen(
-            "cmd.exe", cwd=self.model_folder,
+            """cmd.exe""", cwd=self.model_folder,
             stdin=subprocess.PIPE, stdout=serve_logfile, stderr=serve_logfile,
             text=True, shell=True
         )
 
-        outputA, errorsA = process.communicate([
-            os.path.join(self.model_folder, "./env/Scripts/activate"),
-         cmd   
-        ])
+        try:
+            process.communicate(cmd, timeout=15)
+        except:
+            pass
 
-        #outputB, errorsB = process.communicate(input=cmd)
+        serve_logfile.flush()
+
+
+    def _health(self):
+
+        import requests
+
         
 
-        #output, errors = process.communicate(input=cmd)
-        # serve_logfile.flush()
+        res = requests.post(f"http://localhost:{self.port}/invocations", json=inp)
 
-        #ret = subprocess.run(cmd, capture_output=True, shell=True)
+        print(res)
 
-        print(ret)
+
+    def _get_input_example(self):
+        import json
+        try:
+            with open(os.path.join(self.model_folder, "input_example.json"), "r") as f:
+                inp = json.load(f)
+
+            return inp
+        except:
+            return {}
+
+
+
+
 
     def __init__(self, server,  m, model_version):
         self.server = server
@@ -151,21 +176,27 @@ class BaseHandler:
             self.work_folder, model_version.source.split("/")[-1])
         pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
 
-        if not os.path.exists(self.model_folder):
+        if os.path.exists(self.model_folder) == False:
             self._setup_model()
 
         self.port = self._get_free_port()
         self._start_server()
 
-        model = mlflow.pyfunc.load_model(self.model_version_source)
+        from mlflow.models.model import Model as _Model
+        metadata = _Model.load(os.path.join(self.model_folder, mlflow.pyfunc.MLMODEL_FILE_NAME))
+
+        
+        #self._health()
+
+
 
         try:
-            input_schema = model.metadata.get_input_schema()
+            input_schema = metadata.get_input_schema()
         except:
             input_schema = None
 
         try:
-            output_schema = model.metadata.get_output_schema()
+            output_schema = metadata.get_output_schema()
         except:
             output_schema = None
 
@@ -174,23 +205,12 @@ class BaseHandler:
         if not output_schema:
             output_schema = Schema([])
 
-        try:
-            res = self.server.load_artifact(
-                model_version.run_id,
-                os.path.join(
-                    model.metadata.artifact_path,
-                    model.metadata.saved_input_example_info[
-                        'artifact_path']
-                ))
-            print(res.json())
-            self.input_example_data = res.json()['inputs']
-        except:
-            self.input_example_data = {}
+        self.input_example_data = self._get_input_example()
+
 
         self.version = model_version.version
         self.source = model_version.source
 
-        self.model = model
         self.input_schema = input_schema if input_schema else {"inputs": []}
         self.output_schema = output_schema if output_schema else {"inputs": []}
 
@@ -401,6 +421,7 @@ class BaseHandler:
         """
         store the model to a directory
         """
+        pass
         # save special references
         server = self.server
         model = self.model
