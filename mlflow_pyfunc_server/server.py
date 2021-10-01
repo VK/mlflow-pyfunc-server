@@ -1,6 +1,8 @@
+import pickle
 import sys
 import os
 import pathlib
+
 
 from mlflow.tracking import MlflowClient
 import mlflow.pyfunc
@@ -32,18 +34,20 @@ import traceback
 
 
 from .config import p as cfg
-from .basehandler import BaseHandler, load
-from .basehandler import load as load_BaseHandler
+from .basehandler import BaseHandler
+#from .basehandler import load as load_BaseHandler
 import atexit
 
 __version__ = "0.1.20"
 _eureka_client = None
+
 
 @atexit.register
 def cleanup():
     global _eureka_client
     if _eureka_client:
         _eureka_client.stop()
+
 
 class Server:
 
@@ -84,7 +88,7 @@ class Server:
                 if _eureka_client:
                     print("Eureka client already started")
                 else:
-                    
+
                     _eureka_client = eureka_client.EurekaClient(
                         eureka_server=self.config.eureka_server,
                         app_name=self.config.app_name,
@@ -99,10 +103,6 @@ class Server:
                 self.error_dict["eureka"] = {
                     "message": str(ex),
                 }
-
-        # init schedulerr
-        self.scheduler = None
-        self.init_scheduler()
 
         # init FastAPI app
         tags_metadata = [
@@ -134,7 +134,7 @@ class Server:
             except:
                 pid = os.getpid()
                 os.kill(pid, 9)
-            
+
             return self.app.openapi_schema
         self.app.openapi = custom_openapi
 
@@ -157,7 +157,7 @@ class Server:
         self.app.routes.append(starlette_Route(
             self.config.basepath+"/", redirect_to_docs))
         self.app.routes.append(starlette_Route(
-            self.config.basepath+"/info", redirect_to_docs))                        
+            self.config.basepath+"/info", redirect_to_docs))
 
         # create model list endpoint
         @self.app.get(
@@ -187,7 +187,7 @@ class Server:
             tags=["Metadata"],
             description="Get a dict of all errors.",
             response_model=Dict[str, Any],
-            include_in_schema=False
+            include_in_schema=True
         )
         async def errors():
             return self.error_dict
@@ -203,7 +203,7 @@ class Server:
             self.init_scheduler()
             return "OK. Please be patient :)"
 
-        #dummy route for the  eureka health call
+        # dummy route for the  eureka health call
         if self.config.eureka_server:
             @self.app.get(
                 self.config.basepath+'/health',
@@ -213,6 +213,7 @@ class Server:
             )
             async def health():
                 return {}
+
             @self.app.post(
                 self.config.basepath+'/health',
                 tags=["Metadata"],
@@ -222,16 +223,17 @@ class Server:
             async def health():
                 return {}
 
-        # create model artifact endpoints
-
         # check caching
-        if self.config.cache:
-            self.full_cache_dir = os.path.join(
-                pathlib.Path().absolute(), self.config.cachedir)
-            logger.info(f"Use cachedir: {self.full_cache_dir}")
-            pathlib.Path(self.full_cache_dir).mkdir(
-                parents=True, exist_ok=True)
-        #     self.update_models_from_cache()
+        self.full_cache_dir = os.path.join(
+            pathlib.Path().absolute(), self.config.cachedir)
+        logger.info(f"Use cachedir: {self.full_cache_dir}")
+        pathlib.Path(self.full_cache_dir).mkdir(
+            parents=True, exist_ok=True)
+        self.update_models_from_cache()
+
+        # init schedulerr
+        self.scheduler = None
+        self.init_scheduler()
 
     def check_token(self, token):
         """
@@ -262,10 +264,28 @@ class Server:
     def update_models_from_cache(self):
         logger.info(f"Update models from cache")
         # load all available cached models
-        for filename in os.listdir(self.full_cache_dir):
-            newmodel = load_BaseHandler(os.path.join(
-                self.full_cache_dir, filename), self)
-            self.model_dict[newmodel.name] = newmodel
+        meta_file = os.path.join(self.full_cache_dir, "meta.pkl")
+        if os.path.exists(meta_file):
+            with open(meta_file, "rb") as f:
+                old_config = pickle.load(f)
+                for name, m in old_config.items():
+                    try:
+                        newmodel = BaseHandler(
+                            self, m["model"], m["model_version"])
+                        newmodel.register_route()
+                        self.model_dict[name] = newmodel
+                    except Exception as ex:
+                        exc_type, exc_obj, exc_tb = sys.exc_info()
+                        fname = os.path.split(
+                            exc_tb.tb_frame.f_code.co_filename)[1]
+                        self.error_dict[name] = {
+                            "message": str(ex),
+                            "type": str(exc_type),
+                            "file": fname,
+                            "line": exc_tb.tb_lineno,
+                            "exception": exc_obj,
+                            "traceback": traceback.format_exc().split("\n"),
+                        }
 
         self.app.openapi_schema = None
 
@@ -298,7 +318,9 @@ class Server:
 
             # if the currently loaded model is already ok
             if name in self.model_dict and model_version.run_id == self.model_dict[name].run_id:
-                continue
+                # check if the model is still working
+                if self.model_dict[name].health():
+                    continue
 
             # check if the type tag fits
             if len(self.config.tags) > 0 and all([not tt in m.tags.keys() for tt in self.config.tags]):
@@ -306,21 +328,41 @@ class Server:
 
             logger.info(f"Update model {name}")
 
-            # delete old route
-            for idx2 in [idx for idx, r in enumerate(self.app.routes) if r.path == self.config.basepath+"/"+name]:
-                del self.app.routes[idx2]
-
             # create new handler
             try:
                 newmodel = BaseHandler(self, m, model_version)
+
+                # delete old route
+                for idx2 in [idx for idx, r in enumerate(self.app.routes) if r.path == self.config.basepath+"/"+name]:
+                    del self.app.routes[idx2]
+
+                # register new route
+                newmodel.register_route()             
+
+                # keep old model
+                if name in self.model_dict:
+                    oldmodel = self.model_dict[name]
+                else:
+                    oldmodel = None
+
                 self.model_dict[name] = newmodel
 
                 if name in self.error_dict:
                     del self.error_dict[name]
 
-                if self.config.cache:
-                    # create a cache representation of the new model
-                    newmodel.save(os.path.join(self.full_cache_dir, name))
+                with open(os.path.join(self.full_cache_dir, "meta.pkl"), "wb") as f:
+                    pickle.dump({
+                        key: {
+                            "model": val.m,
+                            "model_version": val.model_version
+                        }
+                        for key, val in self.model_dict.items()
+                    }, f)
+
+                # finally stop the old mlflow server
+                if oldmodel is not None:
+                    oldmodel._stop_server()
+                    del oldmodel
 
             except Exception as ex:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -336,12 +378,12 @@ class Server:
 
         self.app.openapi_schema = None
 
-    def load_artifact(self, run_id, artifact_path):
-        """ load an artifact from server, used for input_example
-        """
-        params = {"path": artifact_path, "run_uuid": run_id}
-        res = requests.get(self.config.mlflow+"/get-artifact", params=params)
-        return res
+    # def load_artifact(self, run_id, artifact_path):
+    #     """ load an artifact from server, used for input_example
+    #     """
+    #     params = {"path": artifact_path, "run_uuid": run_id}
+    #     res = requests.get(self.config.mlflow+"/get-artifact", params=params)
+    #     return res
 
     def init_scheduler(self):
         """ init and restart the scheduler

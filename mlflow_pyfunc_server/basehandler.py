@@ -1,9 +1,11 @@
 from ntpath import join
 import os
 import mlflow
-from mlflow.pyfunc import model
+from mlflow import exceptions
+#from mlflow.pyfunc import model
 from mlflow.types.schema import Schema
 from mlflow.types.schema import TensorSpec
+from mlflow.exceptions import MlflowException as _MlflowException
 
 from pydantic import BaseModel
 import numpy as np
@@ -15,7 +17,14 @@ import dill as pickle
 import importlib
 
 import shutil
+import time
 import pathlib
+
+import requests
+import subprocess
+
+
+import threading
 
 
 class BaseHandler:
@@ -30,9 +39,102 @@ class BaseHandler:
         "object": "?"
     }
 
+    def __init__(self, server,  m, model_version):
+        # parent server
+        self.server = server
+
+        # the local mlflow server
+        self.__serve_logfile = None
+        self.__serve_proc = None
+        self.m = m
+        self.name = m.name
+        self.model_version = model_version
+        self.model_version_source = (model_version.source)
+        self.run_id = model_version.run_id
+        self.work_folder = os.path.join(server.full_cache_dir, self.run_id)
+        self.model_folder = os.path.join(
+            self.work_folder, model_version.source.split("/")[-1])
+        pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
+
+        if os.path.exists(self.model_folder) == False:
+            self._setup_model()
+
+        self.port = self._get_free_port()
+        self._start_server()
+
+        from mlflow.models.model import Model as _Model
+        metadata = _Model.load(os.path.join(
+            self.model_folder, mlflow.pyfunc.MLMODEL_FILE_NAME))
+
+        health = False
+        checkcount = False
+        while health == False and checkcount < 5:
+            health = self.health()
+            checkcount += 1
+            time.sleep(1.0)
+
+        if health == False:
+            self._stop_server()
+            raise Exception("Model not working with example input!")
+
+        try:
+            input_schema = metadata.get_input_schema()
+        except:
+            input_schema = None
+
+        try:
+            output_schema = metadata.get_output_schema()
+        except:
+            output_schema = None
+
+        if not input_schema:
+            input_schema = Schema([])
+        if not output_schema:
+            output_schema = Schema([])
+
+        self.input_example_data = self._get_input_example()
+
+        self.version = model_version.version
+        self.source = model_version.source
+
+        self.input_schema = input_schema if input_schema else {"inputs": []}
+        self.output_schema = output_schema if output_schema else {"inputs": []}
+
+        self.output_schema._inputs.append(
+            TensorSpec(np.dtype("int"), [1], "x__version"))
+        self.output_schema._inputs.append(
+            TensorSpec(np.dtype("str"), [1], "x__mlflow_id"))
+
+        self.description = m.description
+        timestamp = model_version.creation_timestamp/1000
+        self.creation = datetime.fromtimestamp(
+            timestamp).strftime('%Y-%m-%d %H:%M')
+
+        self.long_description = f"""{m.description}\n\n"""
+        try:
+            if len(input_schema.inputs) > 0:
+                self.long_description += f"<b>Input Schema:</b> {self._get_schema_string(input_schema)} <br/>\n"
+        except:
+            pass
+        try:
+            if len(output_schema.inputs) > 0:
+                self.long_description += f"<b>Output Schema:</b> {self._get_schema_string(output_schema)}<br/>\n"
+        except:
+            pass
+
+        self.long_description += f"""
+<b>Version: </b> {self._get_version_link(m.name, model_version)}<br/>
+<b>Run: </b> {self._get_experiment_link(m.name, model_version)}<br/>
+<b>Creation: </b> {self.creation}
+        """
+
+        self._update_schema_classes()
+
     def _setup_model(self):
+        """
+        Setup the local environment to serve the mlflow model
+        """
         from mlflow.pyfunc import _download_artifact_from_uri
-        import subprocess
         import glob
 
         # create a logfile
@@ -104,6 +206,9 @@ class BaseHandler:
         setup_logfile.close()
 
     def _get_free_port(self, host='127.0.0.1'):
+        """
+        use socket to search for a free port
+        """
         import socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((host, 0))
@@ -112,45 +217,90 @@ class BaseHandler:
         return port
 
     def _start_server(self):
-        from time import sleep
-
+        """
+        start the mlflow server
+        """
         # create a logfile
-        serve_logfile = open(os.path.join(
-            self.work_folder, f"{os.path.basename(self.model_folder)}_servelog.txt"), "a")
+        filename = os.path.join(self.work_folder,
+                                f"{os.path.basename(self.model_folder)}_servelog_{self.port}.txt")
 
-        import subprocess
+        import logging
+        import logging.handlers as handlers
+
+        self.__serve_logfile = logging.getLogger(str(self.port))
+        self.__serve_logfile.setLevel(logging.INFO)
+
+        # setup the logging format        
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        logHandler = handlers.RotatingFileHandler(
+            filename, mode="a", maxBytes=10000000, backupCount=2,
+        )
+        logHandler.setLevel(logging.INFO)
+        logHandler.setFormatter(formatter)
+
+        self.__serve_logfile.addHandler(logHandler)
+
         cmd = f"""
         {os.path.join(self.model_folder, './env/Scripts/activate')}
-        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda --port {self.port}
+        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda -w 1 --port {self.port}
         
         """
 
-        process = subprocess.Popen(
+        self.__serve_proc = subprocess.Popen(
             """cmd.exe""", cwd=self.model_folder,
-            stdin=subprocess.PIPE, stdout=serve_logfile, stderr=serve_logfile,
-            text=True, shell=True
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True,
+            shell=True
         )
 
+        self.__serve_proc.stdin.write(cmd)
+        self.__serve_proc.stdin.flush()
+
+    def _stop_server(self):
+        """
+        stop the mlflow server
+        """
         try:
-            process.communicate(cmd, timeout=15)
+            self.__serve_proc.kill()
+        except:
+            pass
+        try:
+            self.__serve_logfile.error("Killed server")
         except:
             pass
 
-        serve_logfile.flush()
+    def health(self):
+        """
+        Internal healthcheck.
 
+        Uses the input example to compute a result.
+        """
+        inp = self._get_input_example()
 
-    def _health(self):
+        try:
+            res = self._predict(inp)
+            return res.ok
+        except:
+            return False
 
-        import requests
-
-        
-
-        res = requests.post(f"http://localhost:{self.port}/invocations", json=inp)
-
-        print(res)
-
+    def _predict(self, inp):
+        """
+        Just call the created server to compute the result
+        """
+        self.__serve_logfile.info(inp)
+        res = requests.post(
+            f"http://localhost:{self.port}/invocations", json=inp)
+        if res.ok:
+            self.__serve_logfile.info("OK")
+        else:
+            self.__serve_logfile.info(res.content)
+        return res
 
     def _get_input_example(self):
+        """
+        Usually a mlflow model has an input_example.json.
+        This is used to prepare the webgui + health checks.
+        """
         import json
         try:
             with open(os.path.join(self.model_folder, "input_example.json"), "r") as f:
@@ -160,92 +310,10 @@ class BaseHandler:
         except:
             return {}
 
-
-
-
-
-    def __init__(self, server,  m, model_version):
-        self.server = server
-        self.m = m
-        self.name = m.name
-
-        self.model_version_source = (model_version.source)
-        self.run_id = model_version.run_id
-        self.work_folder = os.path.join(server.full_cache_dir, self.run_id)
-        self.model_folder = os.path.join(
-            self.work_folder, model_version.source.split("/")[-1])
-        pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
-
-        if os.path.exists(self.model_folder) == False:
-            self._setup_model()
-
-        self.port = self._get_free_port()
-        self._start_server()
-
-        from mlflow.models.model import Model as _Model
-        metadata = _Model.load(os.path.join(self.model_folder, mlflow.pyfunc.MLMODEL_FILE_NAME))
-
-        
-        #self._health()
-
-
-
-        try:
-            input_schema = metadata.get_input_schema()
-        except:
-            input_schema = None
-
-        try:
-            output_schema = metadata.get_output_schema()
-        except:
-            output_schema = None
-
-        if not input_schema:
-            input_schema = Schema([])
-        if not output_schema:
-            output_schema = Schema([])
-
-        self.input_example_data = self._get_input_example()
-
-
-        self.version = model_version.version
-        self.source = model_version.source
-
-        self.input_schema = input_schema if input_schema else {"inputs": []}
-        self.output_schema = output_schema if output_schema else {"inputs": []}
-
-        self.output_schema._inputs.append(
-            TensorSpec(np.dtype("int"), [1], "x__version"))
-        self.output_schema._inputs.append(
-            TensorSpec(np.dtype("str"), [1], "x__mlflow_id"))
-
-        self.description = m.description
-        timestamp = model_version.creation_timestamp/1000
-        self.creation = datetime.fromtimestamp(
-            timestamp).strftime('%Y-%m-%d %H:%M')
-
-        self.long_description = f"""{m.description}\n\n"""
-        try:
-            if len(input_schema.inputs) > 0:
-                self.long_description += f"<b>Input Schema:</b> {self.get_schema_string(input_schema)} <br/>\n"
-        except:
-            pass
-        try:
-            if len(output_schema.inputs) > 0:
-                self.long_description += f"<b>Output Schema:</b> {self.get_schema_string(output_schema)}<br/>\n"
-        except:
-            pass
-
-        self.long_description += f"""
-<b>Version: </b> {self.get_version_link(m.name, model_version)}<br/>
-<b>Run: </b> {self.get_experiment_link(m.name, model_version)}<br/>
-<b>Creation: </b> {self.creation}
+    def _update_schema_classes(self):
         """
-
-        self.update_schema_classes()
-        self.register_route()
-
-    def update_schema_classes(self):
+        extract schema information
+        """
 
         if self.input_schema:
             input_schema_class = type(
@@ -254,17 +322,22 @@ class BaseHandler:
                 {el["name"]:
                  self.input_example_data[el["name"]]
                  if el["name"] in self.input_example_data else
-                 self.get_example_el(el) for el in self.input_schema.to_dict() if "name" in el})
+                 self._get_example_el(el) for el in self.input_schema.to_dict() if "name" in el})
         else:
             input_schema_class = None
 
         try:
-            np_input = self.numpy_input(
-                self.input_example_data, self.input_schema)
-            output_example_data = self.model.predict(np_input)
-            output_example_data = {k: v.tolist()
-                                   for k, v in output_example_data.items()}
-        except:
+            input_example = self._get_input_example()
+            res = self._predict(input_example)
+            if res.ok:
+                output_example_data = res.json()
+                output_example_data.update(
+                    {"x__version": [int(self.version)],
+                     "x__mlflow_id": [self.run_id]}
+                )
+            else:
+                output_example_data = {}
+        except Exception as ex:
             output_example_data = {}
 
         if self.output_schema:
@@ -274,7 +347,7 @@ class BaseHandler:
                 {el["name"]:
                  output_example_data[el["name"]]
                  if el["name"] in output_example_data else
-                 self.get_example_el(el) for el in self.output_schema.to_dict()})
+                 self._get_example_el(el) for el in self.output_schema.to_dict()})
         else:
             output_schema_class = None
 
@@ -284,6 +357,9 @@ class BaseHandler:
         self.output_schema_class_type = output_schema_class
 
     def register_route(self):
+        """
+        setup the parent server route
+        """
         if self.input_schema_class is None or len(self.input_schema.inputs) == 0:
             # no input create get interface
             if len(self.server.config.token) > 0:
@@ -331,56 +407,60 @@ class BaseHandler:
                     return self.apply_model(data)
 
     def apply_model(self, data):
-        # create a numpy input array
-        if self.input_schema_class is None or len(self.input_schema.inputs) == 0:
-            np_input = np.array([])
+        """
+        compute the model result
+        """
+        # create a input array
+        try:
+            input_array = {
+                key: val
+                for key, val in data.__dict__.items()
+            }
+        except Exception as ex:
+            raise self._get_error_message("Model input error", ex)
+
+        try:
+            res = self._predict({"inputs": input_array})
+        except Exception as ex:
+            raise self._get_error_message("Model call error", ex)
+
+        if res.ok:
+            model_output = res.json()
+            model_output.update(
+                {
+                    "x__version": [int(self.version)],
+                    "x__mlflow_id": [self.run_id]
+                }
+            )
         else:
-            try:
-                np_input = self.numpy_input(data.__dict__, self.input_schema)
-            except Exception as ex:
-                raise self.get_error_message("Parse input error", ex)
+            raise self._get_error_message(
+                "Model prediction error", _MlflowException(res.json()["message"]))
 
         try:
-            model_output = self.model.predict(np_input)
+            output = self._parse_output(model_output)
         except Exception as ex:
-            raise self.get_error_message("Model prediction error", ex)
-
-        try:
-            output = self.parse_output(model_output)
-        except Exception as ex:
-            raise self.get_error_message("Parse output error", ex)
-
-        output.update(
-            {"x__version": [int(self.version)], "x__mlflow_id": [self.run_id]})
+            raise self._get_error_message("Parse output error", ex)
 
         return output
 
-    def get_version_link(self, name, model_version):
+    def _get_version_link(self, name, model_version):
         return f"{model_version.version}"
 
-    def get_experiment_link(self, name, model_version):
+    def _get_experiment_link(self, name, model_version):
         return f"{model_version.run_id}"
 
-    def get_nested(self, dtype, shape):
+    def _get_nested(self, dtype, shape):
         if len(shape) == 1:
             return [self.dtype_sample[dtype]]*shape[0]
         else:
-            return [self.get_nested(dtype, shape[1:])]*max(1, shape[0])
+            return [self._get_nested(dtype, shape[1:])]*max(1, shape[0])
 
-    def get_example_el(self, el):
+    def _get_example_el(self, el):
         if el["type"] == 'tensor':
-            return self.get_nested(**el["tensor-spec"])
+            return self._get_nested(**el["tensor-spec"])
         return None
 
-    def numpy_input(self, data, input_cfg):
-        types = {el["name"]: el["tensor-spec"]["dtype"]
-                 for el in input_cfg.to_dict() if "name" in el}
-        return {
-            key: np.array(val).astype(types[key])
-            for key, val in data.items()
-        }
-
-    def get_error_message(self, loc, ex):
+    def _get_error_message(self, loc, ex):
         self.server.logger.error(ex)
         return HTTPException(status_code=442, detail=[
             {
@@ -390,7 +470,7 @@ class BaseHandler:
             }
         ])
 
-    def parse_output(self, data):
+    def _parse_output(self, data):
         if isinstance(data, pd.DataFrame):
             return data.to_dict(orient="list")
         return {
@@ -398,7 +478,7 @@ class BaseHandler:
             for key, val in data.items()
         }
 
-    def get_schema_string(self, schema):
+    def _get_schema_string(self, schema):
         return "<ul><li>" + \
             '</li><li>'.join([
                 '<b>'+s.name+'</b>: ' +
@@ -416,107 +496,3 @@ class BaseHandler:
             "description": self.description,
             "creation": self.creation
         }
-
-    def save(self, dirname):
-        """
-        store the model to a directory
-        """
-        pass
-        # save special references
-        server = self.server
-        model = self.model
-        input_schema_class = self.input_schema_class
-        output_schema_class = self.output_schema_class
-        input_schema_class_type = self.input_schema_class_type
-        output_schema_class_type = self.output_schema_class_type
-
-        # null class references
-        self.server = None
-        self.model = None
-        self.input_schema_class = None
-        self.output_schema_class = None
-        self.input_schema_class_type = None
-        self.output_schema_class_type = None
-
-        # create clean folder
-        if os.path.exists(dirname):
-            shutil.rmtree(dirname)
-        pathlib.Path(dirname).mkdir(parents=True, exist_ok=True)
-
-        # copy the mlflow model to a local folder
-        extra_model_dir = os.path.join(dirname, "mlflow")
-        pathlib.Path(extra_model_dir).mkdir(parents=True, exist_ok=True)
-        self.extra_model_dir = _pyfunc_save_model_to_cache(
-            self.model_version_source, extra_model_dir)
-
-        # save the metadata
-        filename = os.path.join(dirname, "meta.pkl")
-        with open(filename, "wb") as f:
-            pickle.dump(self, f)
-
-        # reset class references
-        self.server = server
-        self.model = model
-        self.input_schema_class = input_schema_class
-        self.output_schema_class = output_schema_class
-        self.input_schema_class_type = input_schema_class_type
-        self.output_schema_class_type = output_schema_class_type
-
-
-def load(dirname, server):
-    """
-    create a basehandler from cache
-    """
-    filename = os.path.join(dirname, "meta.pkl")
-    with open(filename, "rb") as f:
-        output = pickle.load(f)
-
-    output.model = _pyfunc_load_model_from_cache(output.extra_model_dir)
-    output.server = server
-    output.update_schema_classes()
-    output.register_route()
-
-    return output
-
-
-def _pyfunc_save_model_to_cache(model_uri, output_path):
-    """
-    download the artifact into the cache folder
-    """
-
-    local_path = mlflow.pyfunc._download_artifact_from_uri(artifact_uri=model_uri,
-                                                           output_path=output_path)
-    return local_path
-
-
-def _pyfunc_load_model_from_cache(local_path):
-    """
-    load the pyfunc model directly from cache
-    """
-    from mlflow.models import Model
-    from mlflow.pyfunc import PyFuncModel
-    from mlflow.models.model import MLMODEL_FILE_NAME
-    from mlflow.exceptions import MlflowException
-    from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
-    FLAVOR_NAME = "python_function"
-    DATA = "data"
-    MAIN = "loader_module"
-    CODE = "code"
-
-    model_meta = Model.load(os.path.join(local_path, MLMODEL_FILE_NAME))
-
-    conf = model_meta.flavors.get(FLAVOR_NAME)
-    if conf is None:
-        raise MlflowException(
-            'Model does not have the "{flavor_name}" flavor'.format(
-                flavor_name=FLAVOR_NAME),
-            RESOURCE_DOES_NOT_EXIST,
-        )
-
-    data_path = os.path.join(local_path, conf[DATA]) if (
-        DATA in conf) else local_path
-    if CODE in conf and conf[CODE]:
-        code_path = os.path.join(local_path, conf[CODE])
-        mlflow.pyfunc.utils._add_code_to_system_path(code_path=code_path)
-    model_impl = importlib.import_module(conf[MAIN])._load_pyfunc(data_path)
-    return PyFuncModel(model_meta=model_meta, model_impl=model_impl)

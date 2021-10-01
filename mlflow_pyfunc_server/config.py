@@ -40,8 +40,6 @@ p.add_argument('--description', type=str,
 
 
 # local caching
-p.add_argument('--cache',  default=False, action="store_true",
-               help="cache latest model on harddrive")
 p.add_argument('--cachedir', type=str, default='./cache',
                help="folder to keep the local cache")
 

@@ -11,7 +11,7 @@ def cli():
     uvicorn.run("mlflow_pyfunc_server.serverapp:app",
                 port=config.port,
                 host=config.host,
-                workers=config.workers
+                workers=config.workers,
                 )
 
 
