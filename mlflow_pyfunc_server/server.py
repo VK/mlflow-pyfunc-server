@@ -2,6 +2,7 @@ import pickle
 import sys
 import os
 import pathlib
+import shutil
 
 
 from mlflow.tracking import MlflowClient
@@ -37,8 +38,9 @@ from .config import p as cfg
 from .basehandler import BaseHandler
 #from .basehandler import load as load_BaseHandler
 import atexit
+import glob
 
-__version__ = "0.1.20"
+__version__ = "0.2.01"
 _eureka_client = None
 
 
@@ -220,7 +222,7 @@ class Server:
                 description="Eureka health call.",
                 include_in_schema=False
             )
-            async def health():
+            async def health2():
                 return {}
 
         # check caching
@@ -275,16 +277,9 @@ class Server:
                         newmodel.register_route()
                         self.model_dict[name] = newmodel
                     except Exception as ex:
-                        exc_type, exc_obj, exc_tb = sys.exc_info()
-                        fname = os.path.split(
-                            exc_tb.tb_frame.f_code.co_filename)[1]
                         self.error_dict[name] = {
                             "message": str(ex),
-                            "type": str(exc_type),
-                            "file": fname,
-                            "line": exc_tb.tb_lineno,
-                            "exception": exc_obj,
-                            "traceback": traceback.format_exc().split("\n"),
+                            "type": "Exception"
                         }
 
         self.app.openapi_schema = None
@@ -292,20 +287,16 @@ class Server:
     def update_models(self):
         logger.info(f"Update models")
 
+        # get a list of the latest models
         all_models = []
         try:
             all_models = self.client.list_registered_models()
             if "server" in self.error_dict:
                 del self.error_dict["server"]
         except Exception as ex:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             self.error_dict["server"] = {
                 "message": str(ex),
-                "type": str(exc_type),
-                "file": fname,
-                "line": exc_tb.tb_lineno,
-                "exception": exc_obj
+                "type": "Exception"
             }
 
         for m in all_models:
@@ -337,7 +328,7 @@ class Server:
                     del self.app.routes[idx2]
 
                 # register new route
-                newmodel.register_route()             
+                newmodel.register_route()
 
                 # keep old model
                 if name in self.model_dict:
@@ -365,25 +356,27 @@ class Server:
                     del oldmodel
 
             except Exception as ex:
-                exc_type, exc_obj, exc_tb = sys.exc_info()
-                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
                 self.error_dict[name] = {
                     "message": str(ex),
-                    "type": str(exc_type),
-                    "file": fname,
-                    "line": exc_tb.tb_lineno,
-                    "exception": exc_obj,
-                    "traceback": traceback.format_exc().split("\n"),
+                    "type": "Exception"
                 }
 
-        self.app.openapi_schema = None
+        # cleanup non registerd models
 
-    # def load_artifact(self, run_id, artifact_path):
-    #     """ load an artifact from server, used for input_example
-    #     """
-    #     params = {"path": artifact_path, "run_uuid": run_id}
-    #     res = requests.get(self.config.mlflow+"/get-artifact", params=params)
-    #     return res
+        # cleanup cache
+        for folder in glob.glob(os.path.join(pathlib.Path().absolute(), self.config.cachedir, "*")):
+            if os.path.isdir(folder):
+                run_id = os.path.basename(folder)
+                usefull = any(
+                    [any([v.run_id == run_id for v in m.latest_versions]) for m in all_models])
+                if usefull == False:
+                    dir_path = pathlib.Path(folder)
+                    try:
+                        shutil.rmtree(dir_path)
+                    except Exception:
+                        pass
+
+        self.app.openapi_schema = None
 
     def init_scheduler(self):
         """ init and restart the scheduler

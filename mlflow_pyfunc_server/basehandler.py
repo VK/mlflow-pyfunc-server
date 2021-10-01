@@ -1,30 +1,21 @@
-from ntpath import join
 import os
+import shutil
 import mlflow
-from mlflow import exceptions
-#from mlflow.pyfunc import model
 from mlflow.types.schema import Schema
 from mlflow.types.schema import TensorSpec
 from mlflow.exceptions import MlflowException as _MlflowException
-
-from pydantic import BaseModel
+from pydantic import BaseModel as _BaseModel
 import numpy as np
 import pandas as pd
 from fastapi import HTTPException, Depends
 from datetime import datetime
 
-import dill as pickle
-import importlib
 
-import shutil
 import time
 import pathlib
 
 import requests
 import subprocess
-
-
-import threading
 
 
 class BaseHandler:
@@ -57,7 +48,11 @@ class BaseHandler:
         pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
 
         if os.path.exists(self.model_folder) == False:
-            self._setup_model()
+            try:
+                self._setup_model()
+            except Exception as ex:
+                shutil.rmtree(self.model_folder)
+                raise ex
 
         self.port = self._get_free_port()
         self._start_server()
@@ -153,6 +148,9 @@ class BaseHandler:
             ["python", "-m",  "venv", "env"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
         setup_logfile.flush()
 
+        if result_env.returncode != 0:
+            raise Exception("Unable to setup env")
+
         env_pip = os.path.join(self.model_folder, "./env/Scripts/pip")
 
         # get the requirements of the model
@@ -180,6 +178,9 @@ class BaseHandler:
             [env_pip, "install", *req], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
         setup_logfile.flush()
 
+        if result_pip.returncode != 0:
+            raise Exception("Unable to install requirements.txt")
+
         # install direct libs
         for lib_folder in glob.glob(os.path.join(self.model_folder, "code/*")):
 
@@ -191,7 +192,10 @@ class BaseHandler:
                      "install", "-r",
                      lib_req_file],
                     stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
-            setup_logfile.flush()
+                if result_pip.returncode != 0:
+                    raise Exception(
+                        f"Unable to install requirements of library {os.path.basename(lib_folder)}")
+                setup_logfile.flush()
 
             # install the libs
             result_lib = subprocess.run([
@@ -201,6 +205,10 @@ class BaseHandler:
                 "install"], stdout=setup_logfile, stderr=setup_logfile,
                 cwd=lib_folder)
             setup_logfile.flush()
+
+            if result_lib.returncode != 0:
+                raise Exception(
+                    f"Unable to install library {os.path.basename(lib_folder)}")
 
         # close the logging
         setup_logfile.close()
@@ -230,11 +238,13 @@ class BaseHandler:
         self.__serve_logfile = logging.getLogger(str(self.port))
         self.__serve_logfile.setLevel(logging.INFO)
 
-        # setup the logging format        
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        # setup the logging format
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         logHandler = handlers.RotatingFileHandler(
             filename, mode="a", maxBytes=10000000, backupCount=2,
         )
+
         logHandler.setLevel(logging.INFO)
         logHandler.setFormatter(formatter)
 
@@ -318,7 +328,7 @@ class BaseHandler:
         if self.input_schema:
             input_schema_class = type(
                 self.name+"-input",
-                (BaseModel, ),
+                (_BaseModel, ),
                 {el["name"]:
                  self.input_example_data[el["name"]]
                  if el["name"] in self.input_example_data else
@@ -337,13 +347,13 @@ class BaseHandler:
                 )
             else:
                 output_example_data = {}
-        except Exception as ex:
+        except:
             output_example_data = {}
 
         if self.output_schema:
             output_schema_class = type(
                 self.name+"-output",
-                (BaseModel, ),
+                (_BaseModel, ),
                 {el["name"]:
                  output_example_data[el["name"]]
                  if el["name"] in output_example_data else
