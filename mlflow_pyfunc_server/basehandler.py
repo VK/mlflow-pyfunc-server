@@ -151,6 +151,11 @@ class BaseHandler:
         if result_env.returncode != 0:
             raise Exception("Unable to setup env")
 
+        shutil.copyfile(
+            os.path.join(self.server.full_cache_dir, "../env/pyvenv.cfg"),
+            os.path.join(self.model_folder, "env/pyvenv.cfg")
+        )
+
         env_pip = os.path.join(self.model_folder, "./env/Scripts/pip")
 
         # get the requirements of the model
