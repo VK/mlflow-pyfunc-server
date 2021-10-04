@@ -145,7 +145,7 @@ class BaseHandler:
         setup_logfile.flush()
 
         result_env = subprocess.run(
-            ["python", "-m",  "venv", "env"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+            ["python", "-m",  "venv", "env"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder, stdin=subprocess.DEVNULL)
         setup_logfile.flush()
 
         if result_env.returncode != 0:
@@ -175,7 +175,7 @@ class BaseHandler:
 
         # install the requirements
         result_pip = subprocess.run(
-            [env_pip, "install", *req], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+            [env_pip, "install", *req], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder, stdin=subprocess.DEVNULL)
         setup_logfile.flush()
 
         if result_pip.returncode != 0:
@@ -191,7 +191,7 @@ class BaseHandler:
                     [env_pip,
                      "install", "-r",
                      lib_req_file],
-                    stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder)
+                    stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder, stdin=subprocess.DEVNULL)
                 if result_pip.returncode != 0:
                     raise Exception(
                         f"Unable to install requirements of library {os.path.basename(lib_folder)}")
@@ -203,7 +203,7 @@ class BaseHandler:
                 "./setup.py",
                 "build",
                 "install"], stdout=setup_logfile, stderr=setup_logfile,
-                cwd=lib_folder)
+                cwd=lib_folder, stdin=subprocess.DEVNULL)
             setup_logfile.flush()
 
             if result_lib.returncode != 0:
