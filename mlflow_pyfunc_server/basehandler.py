@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import mlflow
 from mlflow.types.schema import Schema
@@ -185,6 +186,17 @@ class BaseHandler:
 
         if result_pip.returncode != 0:
             raise Exception("Unable to install requirements.txt")
+
+        # some crazy stuff
+        result_pip2 = subprocess.run(
+            [env_pip, "install", "virtualenv"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder, stdin=subprocess.DEVNULL)
+        setup_logfile.flush()
+        result_pip3 = subprocess.run(
+            [os.path.join(self.model_folder, "./env/Scripts/virtualenv"), "env"], stdout=setup_logfile, stderr=setup_logfile, cwd=self.model_folder, stdin=subprocess.DEVNULL)
+        setup_logfile.flush()
+
+        if result_pip2.returncode != 0 or result_pip3.returncode != 0:
+            print("Perhaps some problems with the environment")
 
         # install direct libs
         for lib_folder in glob.glob(os.path.join(self.model_folder, "code/*")):
