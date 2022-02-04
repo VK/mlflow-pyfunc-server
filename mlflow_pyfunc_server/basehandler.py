@@ -357,7 +357,15 @@ class BaseHandler:
             input_example = self._get_input_example()
             res = self._predict(input_example)
             if res.ok:
+
                 output_example_data = res.json()
+
+                # reduce example output size
+                for k in output_example_data:
+                    v = output_example_data[k]
+                    if isinstance(v, list) and len(v) > 10:
+                        output_example_data[k] = v[:10]
+
                 output_example_data.update(
                     {"x__version": [int(self.version)],
                      "x__mlflow_id": [self.run_id]}
