@@ -40,7 +40,7 @@ from .basehandler import BaseHandler
 import atexit
 import glob
 
-__version__ = "0.2.5"
+__version__ = "0.2.6"
 _eureka_client = None
 
 
@@ -61,6 +61,8 @@ class Server:
 
         # create the dictionary with all the models
         self.model_dict = {}
+        # create the dictionary with all currently starting models
+        self.starting_dict = {}        
         # create a dictionary with all errors
         self.error_dict = {}
 
@@ -272,10 +274,14 @@ class Server:
                 old_config = pickle.load(f)
                 for name, m in old_config.items():
                     try:
-                        newmodel = BaseHandler(
-                            self, m["model"], m["model_version"])
+                        logger.info(f" * {name}")
+                        newmodel = BaseHandler(self, m["model"], m["model_version"], check=False)
+                        self.starting_dict[name] = newmodel
                         newmodel.register_route()
                         self.model_dict[name] = newmodel
+                        if name in self.starting_dict:
+                            del self.starting_dict[name]
+                        logger.info("   done")                            
                     except Exception as ex:
                         self.error_dict[name] = {
                             "message": str(ex),
@@ -304,6 +310,7 @@ class Server:
             # get model information
             name = urllib.parse.quote_plus(m.name)
 
+
             # get the best version
             model_version = self.get_version(m)
 
@@ -312,6 +319,10 @@ class Server:
                 # check if the model is still working
                 if self.model_dict[name].health():
                     continue
+
+            # don't start a model if already starting
+            if name in self.starting_dict:
+                continue
 
             # check if the type tag fits
             if len(self.config.tags) > 0 and all([not tt in m.tags.keys() for tt in self.config.tags]):
@@ -322,6 +333,7 @@ class Server:
             # create new handler
             try:
                 newmodel = BaseHandler(self, m, model_version)
+                self.starting_dict[name] = newmodel
 
                 # delete old route
                 for idx2 in [idx for idx, r in enumerate(self.app.routes) if r.path == self.config.basepath+"/"+name]:
@@ -338,6 +350,9 @@ class Server:
 
                 self.model_dict[name] = newmodel
 
+
+                if name in self.starting_dict:
+                    del self.starting_dict[name]
                 if name in self.error_dict:
                     del self.error_dict[name]
 

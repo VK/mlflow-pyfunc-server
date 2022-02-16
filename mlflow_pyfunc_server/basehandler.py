@@ -9,7 +9,7 @@ from pydantic import BaseModel as _BaseModel
 import numpy as np
 import pandas as pd
 from fastapi import HTTPException, Depends
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 import time
@@ -17,6 +17,7 @@ import pathlib
 
 import requests
 import subprocess
+
 
 
 class BaseHandler:
@@ -31,7 +32,7 @@ class BaseHandler:
         "object": "?"
     }
 
-    def __init__(self, server,  m, model_version):
+    def __init__(self, server,  m, model_version, check=True):
         # parent server
         self.server = server
 
@@ -62,16 +63,20 @@ class BaseHandler:
         metadata = _Model.load(os.path.join(
             self.model_folder, mlflow.pyfunc.MLMODEL_FILE_NAME))
 
-        health = False
-        checkcount = False
-        while health == False and checkcount < 5:
-            health = self.health()
-            checkcount += 1
-            time.sleep(1.0)
+        self._health_expired = datetime.now()
+        self._health_last = False
 
-        if health == False:
-            self._stop_server()
-            raise Exception("Model not working with example input!")
+        if check:
+            health = False
+            checkcount = False
+            while health == False and checkcount < 5:
+                health = self.health()
+                checkcount += 1
+                time.sleep(1.0)
+
+            if health == False:
+                self._stop_server()
+                raise Exception("Model not working with example input!")
 
         try:
             input_schema = metadata.get_input_schema()
@@ -288,9 +293,24 @@ class BaseHandler:
         stop the mlflow server
         """
         try:
+            self.__serve_logfile.error("Start Kill server")
+        except:
+            pass
+
+
+        try:
             self.__serve_proc.kill()
         except:
             pass
+
+
+
+        try:
+            self.__serve_proc.kill()
+        except:
+            pass
+
+
         try:
             self.__serve_logfile.error("Killed server")
         except:
@@ -302,12 +322,20 @@ class BaseHandler:
 
         Uses the input example to compute a result.
         """
+        current_time = datetime.now()
+
+        if current_time < self._health_expired:
+            return self._health_last
+
         inp = self._get_input_example()
 
         try:
             res = self._predict(inp)
+            self._health_expired = datetime.now() + timedelta(minutes=10)
+            self._health_last = res.ok
             return res.ok
         except:
+            self._health_last = False
             return False
 
     def _predict(self, inp):
