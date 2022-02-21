@@ -40,7 +40,7 @@ from .basehandler import BaseHandler
 import atexit
 import glob
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 _eureka_client = None
 
 

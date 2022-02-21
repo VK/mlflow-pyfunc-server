@@ -11,7 +11,6 @@ import pandas as pd
 from fastapi import HTTPException, Depends
 from datetime import datetime, timedelta
 
-
 import time
 import pathlib
 
@@ -343,8 +342,7 @@ class BaseHandler:
         Just call the created server to compute the result
         """
         self.__serve_logfile.info(inp)
-        res = requests.post(
-            f"http://localhost:{self.port}/invocations", json=inp)
+        res = requests.post(f"http://localhost:{self.port}/invocations", json=inp, stream=True)
         if res.ok:
             self.__serve_logfile.info("OK")
         else:
