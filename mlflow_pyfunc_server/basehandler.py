@@ -497,12 +497,13 @@ class BaseHandler:
             raise self._get_error_message(
                 "Model prediction error", _MlflowException(res.json()["message"]))
 
-        try:
-            output = self._parse_output(model_output)
-        except Exception as ex:
-            raise self._get_error_message("Parse output error", ex)
+        return model_output
 
-        return output
+        # try:
+        #     output = self._parse_output(model_output)
+        # except Exception as ex:
+        #     raise self._get_error_message("Parse output error", ex)
+        # return output
 
     def _get_version_link(self, name, model_version):
         return f"{model_version.version}"
