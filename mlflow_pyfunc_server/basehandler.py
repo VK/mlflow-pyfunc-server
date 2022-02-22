@@ -313,12 +313,17 @@ class BaseHandler:
         """
 
         try:
+            self.__serve_logfile.error("Start Kill server")
+        except:
+            pass
+
+        try:
             self.eureka_client.stop()
         except:
             pass
 
         try:
-            self.__serve_logfile.error("Start Kill server")
+            subprocess.Popen("TASKKILL /F /PID {pid} /T".format(pid=self.__serve_proc.pid))
         except:
             pass
 
