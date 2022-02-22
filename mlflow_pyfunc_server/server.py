@@ -40,15 +40,25 @@ from .basehandler import BaseHandler
 import atexit
 import glob
 
-__version__ = "0.2.7"
+__version__ = "0.3.0"
 _eureka_client = None
+
+_model_dict = None
 
 
 @atexit.register
 def cleanup():
-    global _eureka_client
-    if _eureka_client:
-        _eureka_client.stop()
+    global _eureka_client, _model_dict
+    try:
+        if _eureka_client:
+            _eureka_client.stop()
+    except:
+        pass
+    if _model_dict:
+        for _, m in _model_dict.items():
+            m._stop_server()
+  
+
 
 
 class Server:
@@ -61,6 +71,8 @@ class Server:
 
         # create the dictionary with all the models
         self.model_dict = {}
+        global _model_dict
+        _model_dict = self.model_dict
         # create the dictionary with all currently starting models
         self.starting_dict = {}        
         # create a dictionary with all errors

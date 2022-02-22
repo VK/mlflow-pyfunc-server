@@ -18,7 +18,6 @@ import requests
 import subprocess
 
 
-
 class BaseHandler:
 
     dtype_sample = {
@@ -41,12 +40,14 @@ class BaseHandler:
         self.m = m
         self.name = m.name
         self.model_version = model_version
+        self.version = model_version.version
         self.model_version_source = (model_version.source)
         self.run_id = model_version.run_id
         self.work_folder = os.path.join(server.full_cache_dir, self.run_id)
         self.model_folder = os.path.join(
             self.work_folder, model_version.source.split("/")[-1])
         pathlib.Path(self.work_folder).mkdir(parents=True, exist_ok=True)
+        self.eureka_client = None
 
         if os.path.exists(self.model_folder) == False:
             try:
@@ -94,7 +95,7 @@ class BaseHandler:
 
         self.input_example_data = self._get_input_example()
 
-        self.version = model_version.version
+        
         self.source = model_version.source
 
         self.input_schema = input_schema if input_schema else {"inputs": []}
@@ -273,7 +274,7 @@ class BaseHandler:
 
         cmd = f"""
         {os.path.join(self.model_folder, './env/Scripts/activate')}
-        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda -w 1 --port {self.port}
+        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda -w {self.server.config.workers} --port {self.port} --host 0.0.0.0
         
         """
 
@@ -284,6 +285,25 @@ class BaseHandler:
             shell=True
         )
 
+        if self.server.config.eureka_server:
+            try:
+                import py_eureka_client.eureka_client as eureka_client
+
+                self.eureka_client = eureka_client.EurekaClient(
+                    eureka_server=self.server.config.eureka_server,
+                    app_name=self.name+"-v"+str(self.version),
+                    instance_port=self.port,
+                    instance_host=self.server.config.host_name,
+                    region=self.server.config.eureka_region,
+                    zone=self.server.config.eureka_zone,
+                )
+                self.eureka_client.start()
+
+            except Exception as ex:
+                print(ex)
+    
+            
+
         self.__serve_proc.stdin.write(cmd)
         self.__serve_proc.stdin.flush()
 
@@ -291,24 +311,26 @@ class BaseHandler:
         """
         stop the mlflow server
         """
+
+        try:
+            self.eureka_client.stop()
+        except:
+            pass
+
         try:
             self.__serve_logfile.error("Start Kill server")
         except:
             pass
 
-
         try:
             self.__serve_proc.kill()
         except:
             pass
 
-
-
         try:
             self.__serve_proc.kill()
         except:
             pass
-
 
         try:
             self.__serve_logfile.error("Killed server")
@@ -342,7 +364,8 @@ class BaseHandler:
         Just call the created server to compute the result
         """
         self.__serve_logfile.info(inp)
-        res = requests.post(f"http://localhost:{self.port}/invocations", json=inp, stream=True)
+        res = requests.post(
+            f"http://localhost:{self.port}/invocations", json=inp, stream=True)
         if res.ok:
             self.__serve_logfile.info("OK")
         else:
@@ -372,10 +395,10 @@ class BaseHandler:
             input_schema_class = type(
                 self.name+"-input",
                 (_BaseModel, ),
-                {el["name"]:
-                 self.input_example_data[el["name"]]
-                 if el["name"] in self.input_example_data else
-                 self._get_example_el(el) for el in self.input_schema.to_dict() if "name" in el})
+                {"inputs":
+                 {el["name"]: self.input_example_data["inputs"][el["name"]]
+                  if "inputs" in self.input_example_data and el["name"] in self.input_example_data["inputs"] else
+                  self._get_example_el(el) for el in self.input_schema.to_dict() if "name" in el}})
         else:
             input_schema_class = None
 
@@ -481,7 +504,7 @@ class BaseHandler:
             raise self._get_error_message("Model input error", ex)
 
         try:
-            res = self._predict({"inputs": input_array})
+            res = self._predict(input_array)
         except Exception as ex:
             raise self._get_error_message("Model call error", ex)
 
