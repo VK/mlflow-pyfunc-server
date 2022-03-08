@@ -284,6 +284,8 @@ class BaseHandler:
             text=True,
             shell=True
         )
+		
+        self.__serve_logfile.error("My pid: {pid} ".format(pid=self.__serve_proc.pid))
 
         if self.server.config.eureka_server:
             try:
@@ -317,30 +319,22 @@ class BaseHandler:
         except:
             pass
 
-        try:
-            self.eureka_client.stop()
-        except:
-            pass
-
+        self.eureka_client.status_update("DOWN")
+        self.eureka_client._EurekaClient__should_register = False
+        self.eureka_client._EurekaClient__should_discover = False
         try:
             subprocess.Popen("TASKKILL /F /PID {pid} /T".format(pid=self.__serve_proc.pid))
-        except:
-            pass
-
-        try:
-            self.__serve_proc.kill()
-        except:
-            pass
-
-        try:
-            self.__serve_proc.kill()
-        except:
-            pass
-
-        try:
             self.__serve_logfile.error("Killed server")
         except:
             pass
+		
+        self.eureka_client.status_update("DOWN")
+
+        self.eureka_client.stop()
+        self.__serve_logfile.error("End")
+        self.__serve_logfile.shutdown()
+
+
 
     def health(self):
         """
