@@ -3,7 +3,7 @@ import sys
 import os
 import pathlib
 import shutil
-
+import json
 
 from mlflow.tracking import MlflowClient
 import mlflow.pyfunc
@@ -40,9 +40,8 @@ from .basehandler import BaseHandler
 import atexit
 import glob
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 _eureka_client = None
-
 _model_dict = None
 
 
@@ -57,8 +56,6 @@ def cleanup():
     if _model_dict:
         for _, m in _model_dict.items():
             m._stop_server()
-  
-
 
 
 class Server:
@@ -74,7 +71,7 @@ class Server:
         global _model_dict
         _model_dict = self.model_dict
         # create the dictionary with all currently starting models
-        self.starting_dict = {}        
+        self.starting_dict = {}
         # create a dictionary with all errors
         self.error_dict = {}
 
@@ -132,7 +129,10 @@ class Server:
             }
         ]
         self.app = FastAPI(
-            redoc_url=None, tags_metadata=tags_metadata, root_path=self.config.basepath)
+            redoc_url=None,
+            tags_metadata=tags_metadata,
+            root_path=self.config.basepath
+        )
         self.security = HTTPBearer()
 
         def custom_openapi():
@@ -245,6 +245,14 @@ class Server:
         logger.info(f"Use cachedir: {self.full_cache_dir}")
         pathlib.Path(self.full_cache_dir).mkdir(
             parents=True, exist_ok=True)
+
+        if os.path.exists(os.path.join(self.full_cache_dir, "start_tries.json")):
+            with open(os.path.join(self.full_cache_dir, "start_tries.json"), "r") as f:
+                self.start_tries = json.load(f)
+        else:
+            self.start_tries = {}
+
+        # make a fast model reload
         self.update_models_from_cache()
 
         # init schedulerr
@@ -285,20 +293,23 @@ class Server:
             with open(meta_file, "rb") as f:
                 old_config = pickle.load(f)
                 for name, m in old_config.items():
-                    try:
-                        logger.info(f" * {name}")
-                        newmodel = BaseHandler(self, m["model"], m["model_version"], check=False)
-                        self.starting_dict[name] = newmodel
-                        newmodel.register_route()
-                        self.model_dict[name] = newmodel
-                        if name in self.starting_dict:
-                            del self.starting_dict[name]
-                        logger.info("   done")                            
-                    except Exception as ex:
-                        self.error_dict[name] = {
-                            "message": str(ex),
-                            "type": "Exception"
-                        }
+
+                    if self.get_start_tries(m) == "OK":
+                        try:
+                            logger.info(f" * {name}")
+                            newmodel = BaseHandler(
+                                self, m["model"], m["model_version"], check=False)
+                            self.starting_dict[name] = newmodel
+                            newmodel.register_route()
+                            self.model_dict[name] = newmodel
+                            if name in self.starting_dict:
+                                del self.starting_dict[name]
+                            logger.info("   done")
+                        except Exception as ex:
+                            self.error_dict[name] = {
+                                "message": str(ex),
+                                "type": "Exception"
+                            }
 
         self.app.openapi_schema = None
 
@@ -322,14 +333,17 @@ class Server:
             # get model information
             name = urllib.parse.quote_plus(m.name)
 
-
             # get the best version
             model_version = self.get_version(m)
 
             # if the currently loaded model is already ok
             if name in self.model_dict and model_version.run_id == self.model_dict[name].run_id:
                 # check if the model is still working
-                if self.model_dict[name].health():
+                model_health = self.model_dict[name].health()
+                self.model_dict[name].update_eureka_health(model_health)
+                if model_health:
+                    self.set_start_tries(m, "OK")
+                    self.save_start_tries()
                     continue
 
             # don't start a model if already starting
@@ -338,6 +352,12 @@ class Server:
 
             # check if the type tag fits
             if len(self.config.tags) > 0 and all([not tt in m.tags.keys() for tt in self.config.tags]):
+                continue
+
+            if self.get_start_tries(m) == "ERROR":
+                logger.info(
+                    f"Skip model {name} since last startup did not work"
+                )
                 continue
 
             logger.info(f"Update model {name}")
@@ -362,7 +382,6 @@ class Server:
 
                 self.model_dict[name] = newmodel
 
-
                 if name in self.starting_dict:
                     del self.starting_dict[name]
                 if name in self.error_dict:
@@ -383,6 +402,8 @@ class Server:
                     del oldmodel
 
             except Exception as ex:
+                self.set_start_tries(m, "ERROR")
+                self.save_start_tries()
                 self.error_dict[name] = {
                     "message": str(ex),
                     "type": "Exception"
@@ -422,3 +443,20 @@ class Server:
                                run_date=datetime.datetime.now()
                                + datetime.timedelta(seconds=2))
         self.scheduler.start()
+
+    def save_start_tries(self):
+        with open(os.path.join(self.full_cache_dir, "start_tries.json"), "w") as f:
+            json.dump(self.start_tries, f)
+
+    def set_start_tries(self, m, status):
+        v = self.get_version(m)
+        self.start_tries[f'{m.name}-{v}'] = status
+
+    def get_start_tries(self, m):
+        v = self.get_version(m)
+        key = f'{m.name}-{v}'
+
+        if key in self.start_tries:
+            return self.start_tries[key]
+        else:
+            return "NEW"

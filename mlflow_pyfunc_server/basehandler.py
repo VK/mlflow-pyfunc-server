@@ -69,7 +69,7 @@ class BaseHandler:
         if check:
             health = False
             checkcount = False
-            while health == False and checkcount < 5:
+            while health is False and checkcount < 15:
                 health = self.health()
                 checkcount += 1
                 time.sleep(1.0)
@@ -77,6 +77,8 @@ class BaseHandler:
             if health == False:
                 self._stop_server()
                 raise Exception("Model not working with example input!")
+            else:
+                self.update_eureka_health(True)
 
         try:
             input_schema = metadata.get_input_schema()
@@ -95,7 +97,6 @@ class BaseHandler:
 
         self.input_example_data = self._get_input_example()
 
-        
         self.source = model_version.source
 
         self.input_schema = input_schema if input_schema else {"inputs": []}
@@ -272,21 +273,6 @@ class BaseHandler:
 
         self.__serve_logfile.addHandler(logHandler)
 
-        cmd = f"""
-        {os.path.join(self.model_folder, './env/Scripts/activate')}
-        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda -w {self.server.config.workers} --port {self.port} --host 0.0.0.0
-        
-        """
-
-        self.__serve_proc = subprocess.Popen(
-            """cmd.exe""", cwd=self.model_folder,
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            text=True,
-            shell=True
-        )
-		
-        self.__serve_logfile.error("My pid: {pid} ".format(pid=self.__serve_proc.pid))
-
         if self.server.config.eureka_server:
             try:
                 import py_eureka_client.eureka_client as eureka_client
@@ -300,11 +286,26 @@ class BaseHandler:
                     zone=self.server.config.eureka_zone,
                 )
                 self.eureka_client.start()
+                self.eureka_client.status_update("STARTING")
 
             except Exception as ex:
                 print(ex)
-    
-            
+
+        cmd = f"""
+        {os.path.join(self.model_folder, './env/Scripts/activate')}
+        {os.path.join(self.model_folder, './env/Scripts/mlflow.exe')} models serve -m . --no-conda -w {self.server.config.workers} --port {self.port} --host 0.0.0.0
+        
+        """
+
+        self.__serve_proc = subprocess.Popen(
+            """cmd.exe""", cwd=self.model_folder,
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True,
+            shell=True
+        )
+
+        self.__serve_logfile.error(
+            "My pid: {pid} ".format(pid=self.__serve_proc.pid))
 
         self.__serve_proc.stdin.write(cmd)
         self.__serve_proc.stdin.flush()
@@ -319,21 +320,38 @@ class BaseHandler:
         except:
             pass
 
-        self.eureka_client.status_update("DOWN")
-        self.eureka_client._EurekaClient__should_register = False
-        self.eureka_client._EurekaClient__should_discover = False
         try:
-            subprocess.Popen("TASKKILL /F /PID {pid} /T".format(pid=self.__serve_proc.pid))
+            if self.eureka_client:
+                self.eureka_client.status_update("DOWN")
+                self.eureka_client._EurekaClient__should_register = False
+                self.eureka_client._EurekaClient__should_discover = False
+        except:
+            pass
+
+        try:
+            subprocess.Popen(
+                "TASKKILL /F /PID {pid} /T".format(pid=self.__serve_proc.pid))
             self.__serve_logfile.error("Killed server")
         except:
             pass
-		
+
         self.eureka_client.status_update("DOWN")
 
         self.eureka_client.stop()
         self.__serve_logfile.error("End")
         self.__serve_logfile.shutdown()
 
+
+    def update_eureka_health(self, healty):
+        if self.server.config.eureka_server:
+            try:
+                if healty:
+                    self.eureka_client.status_update("STARTING")
+                else:
+                    self.eureka_client.status_update("OUT_OF_SERVICE")
+
+            except Exception as ex:
+                print(ex)
 
 
     def health(self):
