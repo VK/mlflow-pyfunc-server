@@ -294,7 +294,7 @@ class Server:
                 old_config = pickle.load(f)
                 for name, m in old_config.items():
 
-                    if self.get_start_tries(m) == "OK":
+                    if self.get_start_tries(m["model"]) == "OK":
                         try:
                             logger.info(f" * {name}")
                             newmodel = BaseHandler(
