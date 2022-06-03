@@ -304,7 +304,7 @@ class BaseHandler:
             shell=True
         )
 
-        self.__serve_logfile.error(
+        self.__serve_logfile.info(
             "My pid: {pid} ".format(pid=self.__serve_proc.pid))
 
         self.__serve_proc.stdin.write(cmd)
@@ -341,18 +341,17 @@ class BaseHandler:
         self.__serve_logfile.error("End")
         # self.__serve_logfile.shutdown()
 
-
     def update_eureka_health(self, healty):
+        self.__serve_logfile.info(f"Set eureka health status: {healty}")
         if self.server.config.eureka_server:
             try:
                 if healty:
-                    self.eureka_client.status_update("STARTING")
+                    self.eureka_client.status_update("OK")
                 else:
                     self.eureka_client.status_update("OUT_OF_SERVICE")
 
             except Exception as ex:
                 print(ex)
-
 
     def health(self):
         """
@@ -371,9 +370,11 @@ class BaseHandler:
             res = self._predict(inp)
             self._health_expired = datetime.now() + timedelta(minutes=10)
             self._health_last = res.ok
+            self.__serve_logfile.info(f"Woker is healty: {res.ok}")
             return res.ok
         except:
             self._health_last = False
+            self.__serve_logfile.error(f"Woker heath check error")
             return False
 
     def _predict(self, inp):
