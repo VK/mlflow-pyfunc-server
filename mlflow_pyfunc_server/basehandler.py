@@ -339,7 +339,7 @@ class BaseHandler:
 
         self.eureka_client.stop()
         self.__serve_logfile.error("End")
-        self.__serve_logfile.shutdown()
+        # self.__serve_logfile.shutdown()
 
 
     def update_eureka_health(self, healty):
