@@ -346,7 +346,7 @@ class BaseHandler:
         if self.server.config.eureka_server:
             try:
                 if healty:
-                    self.eureka_client.status_update("OK")
+                    self.eureka_client.status_update("UP")
                 else:
                     self.eureka_client.status_update("OUT_OF_SERVICE")
 
@@ -372,9 +372,10 @@ class BaseHandler:
             self._health_last = res.ok
             self.__serve_logfile.info(f"Woker is healty: {res.ok}")
             return res.ok
-        except:
+        except as err:
             self._health_last = False
-            self.__serve_logfile.error(f"Woker heath check error")
+            self.__serve_logfile.error(f"Woker health check error:")
+            self.__serve_logfile.error(err)
             return False
 
     def _predict(self, inp):
