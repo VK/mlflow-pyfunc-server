@@ -372,7 +372,7 @@ class BaseHandler:
             self._health_last = res.ok
             self.__serve_logfile.info(f"Woker is healty: {res.ok}")
             return res.ok
-        except as err:
+        except Exception as err:
             self._health_last = False
             self.__serve_logfile.error(f"Woker health check error:")
             self.__serve_logfile.error(err)
