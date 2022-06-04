@@ -40,7 +40,7 @@ from .basehandler import BaseHandler
 import atexit
 import glob
 
-__version__ = "0.3.6"
+__version__ = "0.3.7"
 _eureka_client = None
 _model_dict = None
 
@@ -252,8 +252,21 @@ class Server:
         else:
             self.start_tries = {}
 
-        # make a fast model reload
-        self.update_models_from_cache()
+        # check if the last startup of the server is at least 10 minutes
+        if "server_start_time" in self.start_tries:
+
+            start_time = datetime.datetime.fromisoformat(
+                self.start_tries["server_start_time"])
+            if datetime.datetime.now() > start_time + datetime.timedelta(minutes=10):
+                print("try fast model reload")
+
+                # make a fast model reload
+                self.update_models_from_cache()
+
+        # save the startuptime
+        self.start_tries["server_start_time"] = datetime.datetime.now(
+        ).isoformat()
+        self.save_start_tries()
 
         # init schedulerr
         self.scheduler = None

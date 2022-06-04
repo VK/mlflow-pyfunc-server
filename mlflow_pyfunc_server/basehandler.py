@@ -79,6 +79,10 @@ class BaseHandler:
                 raise Exception("Model not working with example input!")
             else:
                 self.update_eureka_health(True)
+        else:
+            self._health_expired = datetime.now() + timedelta(minutes=1)
+            
+
 
         try:
             input_schema = metadata.get_input_schema()
