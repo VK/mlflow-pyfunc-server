@@ -533,6 +533,8 @@ class BaseHandler:
 
         if res.ok:
             model_output = res.json()
+            if "predictions" in model_output:
+                model_output = model_output["predictions"]
             model_output.update(
                 {
                     "x__version": [int(self.version)],
