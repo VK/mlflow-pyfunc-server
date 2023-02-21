@@ -17,6 +17,9 @@ import pathlib
 import requests
 import subprocess
 
+import json_stream
+import json_stream.requests
+
 
 class BaseHandler:
 
@@ -532,10 +535,11 @@ class BaseHandler:
             raise self._get_error_message("Model call error", ex)
 
         if res.ok:
-            model_output = res.json()
-            if "predictions" in model_output:
-                model_output = model_output["predictions"]
-            model_output.update(
+            data = json_stream.requests.load(res, persistent=True)
+            
+            if "predictions" in data:
+                data = data["predictions"]
+            data.update(
                 {
                     "x__version": [int(self.version)],
                     "x__mlflow_id": [self.run_id]
@@ -545,7 +549,14 @@ class BaseHandler:
             raise self._get_error_message(
                 "Model prediction error", _MlflowException(res.json()["message"]))
 
-        return model_output
+        @json_stream.streamable_dict
+        def generate_dict():
+            yield "x__version", [int(self.version)]
+            yield "x__mlflow_id", [self.run_id]
+            for k, v in data.items():
+                yield k, v
+
+        return generate_dict()
 
         # try:
         #     output = self._parse_output(model_output)
