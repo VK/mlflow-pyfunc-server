@@ -8,7 +8,7 @@ from mlflow.exceptions import MlflowException as _MlflowException
 from pydantic import BaseModel as _BaseModel
 import numpy as np
 import pandas as pd
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Response
 from datetime import datetime, timedelta
 
 import time
@@ -17,8 +17,7 @@ import pathlib
 import requests
 import subprocess
 
-import json_stream
-import json_stream.requests
+import json
 
 
 class BaseHandler:
@@ -534,28 +533,21 @@ class BaseHandler:
             raise self._get_error_message("Model call error", ex)
 
         if res.ok:
-            data = json_stream.requests.load(res, persistent=True)
             
-            if "predictions" in data:
-                data = data["predictions"]
+            addon = {
+                "x__version": [int(self.version)],
+                "x__mlflow_id": [self.run_id]
+            }
+            addon = str.encode(json.dumps(addon)[:-1] + ", ")
+            newcontent = addon + res.content[17:-1]
+            
         else:
             raise self._get_error_message(
                 "Model prediction error", _MlflowException(res.json()["message"]))
 
-        @json_stream.streamable_dict
-        def generate_dict():
-            yield "x__version", [int(self.version)]
-            yield "x__mlflow_id", [self.run_id]
-            for k, v in data.items():
-                yield k, list(v)
 
-        return generate_dict()
+        return Response(content=newcontent,  media_type="application/json")
 
-        # try:
-        #     output = self._parse_output(model_output)
-        # except Exception as ex:
-        #     raise self._get_error_message("Parse output error", ex)
-        # return output
 
     def _get_version_link(self, name, model_version):
         return f"{model_version.version}"

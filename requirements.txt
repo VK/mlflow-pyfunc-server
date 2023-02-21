@@ -13,4 +13,3 @@ py-eureka-client==0.10.0
 sklearn
 protobuf==3.19.4
 nest_asyncio
-json-stream
