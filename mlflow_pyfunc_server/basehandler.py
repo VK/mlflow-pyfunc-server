@@ -363,7 +363,6 @@ class BaseHandler:
     def health(self):
         """
         Internal healthcheck.
-
         Uses the input example to compute a result.
         """
         current_time = datetime.now()
@@ -539,12 +538,6 @@ class BaseHandler:
             
             if "predictions" in data:
                 data = data["predictions"]
-            data.update(
-                {
-                    "x__version": [int(self.version)],
-                    "x__mlflow_id": [self.run_id]
-                }
-            )
         else:
             raise self._get_error_message(
                 "Model prediction error", _MlflowException(res.json()["message"]))
@@ -554,7 +547,7 @@ class BaseHandler:
             yield "x__version", [int(self.version)]
             yield "x__mlflow_id", [self.run_id]
             for k, v in data.items():
-                yield k, v
+                yield k, list(v)
 
         return generate_dict()
 
